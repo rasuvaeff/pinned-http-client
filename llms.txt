@@ -1,0 +1,50 @@
+# pinned-http-client
+
+Install:
+
+```
+composer require rasuvaeff/pinned-http-client
+```
+
+## Rules
+
+- PHP 8.3+, `declare(strict_types=1)`, needs `ext-curl`, `ext-filter` and `guzzlehttp/guzzle` ^7.9 with the cURL handler
+- Namespace `Rasuvaeff\PinnedHttpClient`
+- `PinnedClient` is a PSR-18 client: resolves the host once, checks EVERY address with an `AddressPolicy`, pins the connection to those addresses (`CURLOPT_RESOLVE`); a non-public address among public ones refuses the host
+- No redirects (`allow_redirects` forced false, pinned addresses cannot be overridden by options); follow redirects in the caller and send each hop through the client again
+- Only http and https; a URL without host is refused; refusals throw `PinningFailed` (a `NetworkExceptionInterface`, `getRequest()`, cause in `getPrevious()`)
+- Pinning needs the cURL handler of Guzzle (a stream-handler client ignores it); a configured proxy becomes the SSRF boundary
+- Default resolver is `gethostbynamel` (IPv4); pass `resolver:` for your own; a literal IP is only checked
+
+## API
+
+```php
+use GuzzleHttp\Psr7\Request;
+use Rasuvaeff\PinnedHttpClient\AddressPolicy;
+use Rasuvaeff\PinnedHttpClient\PinnedClient;
+use Rasuvaeff\PinnedHttpClient\PinningFailed;
+use Rasuvaeff\PinnedHttpClient\PublicAddresses;
+
+$client = new PinnedClient(
+    policy: new PublicAddresses(),   // default; AddressPolicy::allows(string $address): bool
+    timeoutSeconds: 8.0,
+    connectTimeoutSeconds: 4.0,
+    guzzle: new \GuzzleHttp\Client(), // optional, must use the cURL handler
+    resolver: null,                   // Closure(string $host): list<string>
+);
+
+try {
+    $response = $client->sendRequest(new Request('GET', $url));            // Psr\Http\Client\ClientInterface
+    $stream = $client->send(new Request('GET', $url), ['stream' => true]); // extra Guzzle options
+} catch (PinningFailed $refused) {
+    // not http(s) / no host / does not resolve / resolves to a non-public address / transport failure
+}
+
+(new PublicAddresses())->allows('169.254.169.254'); // false
+(new PublicAddresses())->allows('::ffff:10.0.0.1'); // false: judged as the embedded IPv4
+(new PublicAddresses())->allows('93.184.216.34');   // true
+```
+
+`PublicAddresses` refuses: 0/8, 10/8, 100.64/10, 127/8, 169.254/16, 172.16/12, 192.0.0/24, 192.0.2/24, 192.88.99/24, 192.168/16,
+198.18/15, 198.51.100/24, 203.0.113/24, 224/4, 240/4; IPv6 ::, ::1, 64:ff9b:1::/48, 100::/64, 2001::/32, 2001:db8::/32, 2002::/16,
+fc00::/7, fe80::/10, fec0::/10, ff00::/8; `::ffff:a.b.c.d` and `64:ff9b::/96` are judged by the embedded IPv4; non-IP text is refused.

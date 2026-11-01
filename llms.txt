@@ -8,36 +8,40 @@ composer require rasuvaeff/pinned-http-client
 
 ## Rules
 
-- PHP 8.3+, `declare(strict_types=1)`, needs `ext-curl`, `ext-filter` and `guzzlehttp/guzzle` ^7.9 with the cURL handler
+- PHP 8.3+, `declare(strict_types=1)`, needs `ext-curl`, `ext-filter`; Guzzle is used internally and never exposed
 - Namespace `Rasuvaeff\PinnedHttpClient`
-- `PinnedClient` is a PSR-18 client: resolves the host once, checks EVERY address with an `AddressPolicy`, pins the connection to those addresses (`CURLOPT_RESOLVE`); a non-public address among public ones refuses the host
-- No redirects (`allow_redirects` forced false, pinned addresses cannot be overridden by options); follow redirects in the caller and send each hop through the client again
-- Only http and https; a URL without host is refused; refusals throw `PinningFailed` (a `NetworkExceptionInterface`, `getRequest()`, cause in `getPrevious()`)
-- Pinning needs the cURL handler of Guzzle (a stream-handler client ignores it); a configured proxy becomes the SSRF boundary
-- Default resolver is `gethostbynamel` (IPv4); pass `resolver:` for your own; a literal IP is only checked
+- `PinnedClient` is a PSR-18 client: resolves the host once (IPv4 + IPv6), checks EVERY address with an `AddressPolicy`, pins the connection to those addresses (`CURLOPT_RESOLVE`); a non-public address among public ones refuses the host
+- The client builds its own transport: cURL handler only, no proxy from the environment, no redirects, body bounded (decompressed, default 10 MiB). It takes no Guzzle client, request options or cURL options
+- Redirects: wrap it in `RedirectFollower` — every hop is resolved, checked and pinned again; 303 (and 301/302 for POST) → GET without body; credentials dropped on origin change; `maxRedirects` default 5
+- Only http and https; a URL without host is refused; a literal IP is only checked
+- Exceptions: abstract `ClientException` (`ClientExceptionInterface`, `getRequest()`): `RequestRefused` (`$reason`: `Refusal`), `TransferFailed` (`NetworkExceptionInterface`, cause in `getPrevious()`), `ResponseTooLarge` (`$limit`), `TooManyRedirects` (`$limit`)
+- An explicit `proxy:` makes the proxy the SSRF boundary; DNS resolution has no client-side timeout
 
 ## API
 
 ```php
 use GuzzleHttp\Psr7\Request;
-use Rasuvaeff\PinnedHttpClient\AddressPolicy;
-use Rasuvaeff\PinnedHttpClient\PinnedClient;
-use Rasuvaeff\PinnedHttpClient\PinningFailed;
-use Rasuvaeff\PinnedHttpClient\PublicAddresses;
+use Rasuvaeff\PinnedHttpClient\{ClientException, PinnedClient, PublicAddresses, RedirectFollower, Refusal, RequestRefused, ResponseTooLarge, SystemResolver};
 
 $client = new PinnedClient(
-    policy: new PublicAddresses(),   // default; AddressPolicy::allows(string $address): bool
-    timeoutSeconds: 8.0,
-    connectTimeoutSeconds: 4.0,
-    guzzle: new \GuzzleHttp\Client(), // optional, must use the cURL handler
-    resolver: null,                   // Closure(string $host): list<string>
+    policy: new PublicAddresses(),      // AddressPolicy::allows(string $address): bool
+    resolver: new SystemResolver(),     // Resolver::resolve(string $host): list<string>
+    timeoutSeconds: 8.0,                // > 0
+    connectTimeoutSeconds: 4.0,         // > 0
+    maxBodyBytes: PinnedClient::DEFAULT_MAX_BODY_BYTES, // >= 1 or null (no limit)
+    proxy: null,                        // non-empty URL to opt in
 );
+$client->withMaxBodyBytes(65_536);      // new client
+$client->withTimeouts(2.0, 1.0);        // new client
 
 try {
-    $response = $client->sendRequest(new Request('GET', $url));            // Psr\Http\Client\ClientInterface
-    $stream = $client->send(new Request('GET', $url), ['stream' => true]); // extra Guzzle options
-} catch (PinningFailed $refused) {
-    // not http(s) / no host / does not resolve / resolves to a non-public address / transport failure
+    $response = (new RedirectFollower($client, maxRedirects: 5))->sendRequest(new Request('GET', $url));
+} catch (RequestRefused $refused) {
+    $refused->reason; // Refusal::UnsupportedScheme | MissingHost | Unresolvable | AddressNotAllowed
+} catch (ResponseTooLarge $tooLarge) {
+    $tooLarge->limit;
+} catch (ClientException $failed) {
+    // TransferFailed | TooManyRedirects
 }
 
 (new PublicAddresses())->allows('169.254.169.254'); // false
@@ -46,5 +50,6 @@ try {
 ```
 
 `PublicAddresses` refuses: 0/8, 10/8, 100.64/10, 127/8, 169.254/16, 172.16/12, 192.0.0/24, 192.0.2/24, 192.88.99/24, 192.168/16,
-198.18/15, 198.51.100/24, 203.0.113/24, 224/4, 240/4; IPv6 ::, ::1, 64:ff9b:1::/48, 100::/64, 2001::/32, 2001:db8::/32, 2002::/16,
-fc00::/7, fe80::/10, fec0::/10, ff00::/8; `::ffff:a.b.c.d` and `64:ff9b::/96` are judged by the embedded IPv4; non-IP text is refused.
+198.18/15, 198.51.100/24, 203.0.113/24, 224/4, 240/4; IPv6 ::/96 (incl. :: and ::1), ::ffff:0:0:0/96, 64:ff9b:1::/48, 100::/64,
+2001::/32, 2001:db8::/32, 2002::/16, 3fff::/20, fc00::/7, fe80::/10, fec0::/10, ff00::/8; `::ffff:a.b.c.d` and `64:ff9b::/96`
+are judged by the embedded IPv4; non-IP text is refused.

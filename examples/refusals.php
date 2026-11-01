@@ -9,8 +9,9 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use GuzzleHttp\Psr7\Request;
 use Rasuvaeff\PinnedHttpClient\PinnedClient;
-use Rasuvaeff\PinnedHttpClient\PinningFailed;
 use Rasuvaeff\PinnedHttpClient\PublicAddresses;
+use Rasuvaeff\PinnedHttpClient\RequestRefused;
+use Rasuvaeff\PinnedHttpClient\Resolver;
 
 $policy = new PublicAddresses();
 
@@ -21,13 +22,21 @@ foreach (['93.184.216.34', '2606:4700:4700::1111', '::ffff:8.8.8.8', '127.0.0.1'
 echo "\n";
 
 $dns = ['public.test' => ['93.184.216.34'], 'rebound.test' => ['127.0.0.1'], 'mixed.test' => ['8.8.8.8', '10.0.0.5']];
-$client = new PinnedClient(policy: $policy, resolver: static fn(string $host): array => $dns[$host] ?? []);
+$client = new PinnedClient(policy: $policy, resolver: new class ($dns) implements Resolver {
+    /** @param array<string, list<string>> $dns */
+    public function __construct(private readonly array $dns) {}
+
+    public function resolve(string $host): array
+    {
+        return $this->dns[$host] ?? [];
+    }
+});
 
 foreach (['http://rebound.test/', 'http://mixed.test/', 'http://nowhere.test/', 'http://169.254.169.254/latest/meta-data/', 'ftp://public.test/'] as $url) {
     try {
         $client->sendRequest(new Request('GET', $url));
         echo str_pad($url, 44), "sent\n";
-    } catch (PinningFailed $refused) {
-        echo str_pad($url, 44), 'refused: ', $refused->getMessage(), "\n";
+    } catch (RequestRefused $refused) {
+        echo str_pad($url, 44), 'refused (', $refused->reason->name, '): ', $refused->getMessage(), "\n";
     }
 }

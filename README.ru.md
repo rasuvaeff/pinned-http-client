@@ -19,7 +19,7 @@ URL, проверенный как `https://example.com/`, остаётся оп
 ## Требования
 
 - PHP 8.3-8.5 с `curl` и `filter`
-- `guzzlehttp/guzzle` ^7.9 с обработчиком cURL (он по умолчанию, когда загружен `ext-curl`), `psr/http-client`, `psr/http-message`
+- `guzzlehttp/guzzle` ^7.9 и `guzzlehttp/psr7` ^2.7 (используются внутри, наружу не отдаются), `psr/http-client`, `psr/http-message`
 
 ## Установка
 
@@ -31,36 +31,69 @@ composer require rasuvaeff/pinned-http-client
 
 ```php
 use GuzzleHttp\Psr7\Request;
+use Rasuvaeff\PinnedHttpClient\ClientException;
 use Rasuvaeff\PinnedHttpClient\PinnedClient;
-use Rasuvaeff\PinnedHttpClient\PinningFailed;
+use Rasuvaeff\PinnedHttpClient\RedirectFollower;
+use Rasuvaeff\PinnedHttpClient\RequestRefused;
+use Rasuvaeff\PinnedHttpClient\ResponseTooLarge;
 
-$client = new PinnedClient(); // политика PublicAddresses, 8 с всего, 4 с на соединение
+$client = new PinnedClient(); // только публичные адреса, IPv4 + IPv6, 8 с / 4 с, тело <= 10 МиБ, без прокси
 
 try {
-    $response = $client->sendRequest(new Request('GET', $untrustedUrl));
-} catch (PinningFailed $refused) {
-    // не http(s), нет узла, имя не разрешилось, разрешилось в непубличный адрес или сбой транспорта
+    $response = (new RedirectFollower($client))->sendRequest(new Request('GET', $untrustedUrl));
+} catch (RequestRefused $refused) {
+    $refused->reason; // Refusal::UnsupportedScheme | MissingHost | Unresolvable | AddressNotAllowed
+} catch (ResponseTooLarge $tooLarge) {
+    // тело (после распаковки) превысило maxBodyBytes; передача оборвана
+} catch (ClientException $failed) {
+    // TransferFailed (соединение, TLS, таймаут) или TooManyRedirects
 }
 ```
 
-Это обычный `Psr\Http\Client\ClientInterface`, он подставляется везде, где нужен такой клиент: в `Fetcher` пакета `rasuvaeff/link-preview`, в отправку веб-хуков или в ваш собственный код загрузки.
+Оба — обычные `Psr\Http\Client\ClientInterface`: подходят везде, где его ждут, например в `Fetcher` пакета `rasuvaeff/link-preview`, в отправку вебхуков или в свой код загрузки.
 
-**Переадресации не выполняются** (`allow_redirects` принудительно `false`): цель переадресации - новый недоверенный URL. Следуйте за переадресациями в вызывающем коде и отправляйте каждый переход через клиент заново, чтобы каждый переход был разрешён, проверен и закреплён (так делает `Fetcher` из `rasuvaeff/link-preview`).
+Транспорт клиент строит сам и ваш не принимает: переданный Guzzle-клиент мог бы работать на потоковом обработчике (он не знает закреплённых адресов), через прокси или с переадресациями, и гарантии не стало бы. Настраивается только типизированное:
+
+```php
+$client = new PinnedClient(
+    policy: new PublicAddresses(),      // AddressPolicy::allows(string $address): bool
+    resolver: new SystemResolver(),     // Resolver::resolve(string $host): list<string>
+    timeoutSeconds: 8.0,
+    connectTimeoutSeconds: 4.0,
+    maxBodyBytes: PinnedClient::DEFAULT_MAX_BODY_BYTES, // null — без ограничения
+    proxy: null,                        // 'http://egress:3128' — явно включить прокси
+);
+
+$small = $client->withMaxBodyBytes(512 * 1024);
+$quick = $client->withTimeouts(2.0, 1.0);
+```
+
+**Ограничение тела считает распакованные байты**: gzip-бомба обрывается на лимите, а не после распаковки. Тело до лимита включительно приходит в ответе; байт сверх — и передача заканчивается `ResponseTooLarge`.
+
+**Переадресации** сам `PinnedClient` не выполняет никогда: цель переадресации — новый недоверенный URL. `RedirectFollower` проходит их, отправляя каждый переход через закрепляющий клиент заново (разрешение, проверка, закрепление), превращает `303` (и `301`/`302` для `POST`) в `GET` без тела, убирает `Authorization`, `Cookie` и `Proxy-Authorization` при смене источника и останавливается после `maxRedirects` (по умолчанию 5) с `TooManyRedirects`.
 
 ### Публичный API
 
 | Класс | Описание |
 |---|---|
-| `PinnedClient` | PSR-18 клиент: разрешить имя, проверить каждый адрес, закрепить соединение. `send($request, $guzzleOptions)` добавляет параметры Guzzle, например `stream` |
-| `AddressPolicy` | `allows(string $address): bool`; сюда ставятся ваши правила |
+| `PinnedClient` | PSR-18 клиент: разрешить, проверить каждый адрес, закрепить соединение, ограничить тело. `withMaxBodyBytes()`, `withTimeouts()` |
+| `RedirectFollower` | PSR-18 декоратор над `PinnedClient`: каждый переход закрепляется заново, правила метода и учётных данных, лимит переходов |
+| `AddressPolicy` | `allows(string $address): bool`; сюда — свои правила |
 | `PublicAddresses` | Политика по умолчанию: только публичные адреса |
-| `PinningFailed` | `NetworkExceptionInterface`; запрос и причина приложены |
+| `Resolver` | `resolve(string $host): list<string>` |
+| `SystemResolver` | Резолвер по умолчанию: IPv4 через `gethostbynamel()` (учитывает `/etc/hosts`) и IPv6 по AAAA-записям |
+| `ClientException` | Абстрактный предок всего, что бросают клиенты; `ClientExceptionInterface`, `getRequest()` |
+| `RequestRefused` | Не отправлен; `RequestExceptionInterface`; `$reason` — кейс `Refusal` |
+| `TransferFailed` | Отправлен, но не удался (соединение, TLS, таймаут); `NetworkExceptionInterface`, причина в `getPrevious()` |
+| `ResponseTooLarge` | Тело превысило `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
+| `TooManyRedirects` | Переходов больше `maxRedirects`; `RequestExceptionInterface`, `$limit` |
+| `Refusal` | `UnsupportedScheme`, `MissingHost`, `Unresolvable`, `AddressNotAllowed` |
 
 ### Политика по умолчанию
 
-`PublicAddresses` отвергает частные сети (`10/8`, `172.16/12`, `192.168/16`), loopback, link-local (`169.254/16`, в нём адрес метаданных облака), CGNAT (`100.64/10`), документационные и тестовые диапазоны, multicast, зарезервированные и широковещательный диапазоны, а для IPv6 - неопределённый, loopback, unique-local (`fc00::/7`), link-local (`fe80::/10`), site-local, multicast, Teredo, 6to4 и документационные диапазоны. Адрес IPv6, несущий IPv4 (`::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`), оценивается как этот IPv4. Всё, что не является каноническим текстом IP, отвергается.
+`PublicAddresses` отвергает частные сети (`10/8`, `172.16/12`, `192.168/16`), loopback, link-local (`169.254/16`, где адрес метаданных облака), CGNAT (`100.64/10`), документационные и тестовые диапазоны, multicast, зарезервированные и широковещательные, а для IPv6 — IPv4-совместимый блок `::/96` (вместе с `::` и `::1`), SIIT `::ffff:0:0:0/96`, unique-local (`fc00::/7`), link-local (`fe80::/10`), site-local, multicast, Teredo, 6to4 и документационные `2001:db8::/32` и `3fff::/20`. Адрес IPv6, несущий IPv4 (`::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`), судится как этот IPv4. Всё, что не каноническая запись IP, отвергается.
 
-Строже или мягче - свой `AddressPolicy`, например пропускающий хост разработки:
+Строже или мягче — своей `AddressPolicy`, например пропускающей хост разработки:
 
 ```php
 use Rasuvaeff\PinnedHttpClient\AddressPolicy;
@@ -78,35 +111,22 @@ final readonly class PublicOrLoopback implements AddressPolicy
 $client = new PinnedClient(policy: new PublicOrLoopback(new PublicAddresses()));
 ```
 
-### Резолвер, таймауты, клиент Guzzle
-
-```php
-$client = new PinnedClient(
-    policy: new PublicAddresses(),
-    timeoutSeconds: 5.0,
-    connectTimeoutSeconds: 2.0,
-    guzzle: new \GuzzleHttp\Client(),            // ваш клиент, с обработчиком cURL
-    resolver: static fn (string $host): array => $myDns->ipv4($host), // список адресов текстом
-);
-```
-
-Резолвер по умолчанию - `gethostbynamel()`: только IPv4, как отвечает системный резолвер. Литерал IP в URL закрепления не требует, он только проходит политику.
-
 ## Безопасность
 
 Что делает:
 
-- Разрешает имя один раз, проверяет **каждый** адрес (один непубличный среди публичных отвергает узел) и передаёт cURL ровно эти адреса. TLS по-прежнему проверяет сертификат по имени узла.
-- Пускает только `http` и `https`; отвергает URL без узла.
-- Принудительно ставит `allow_redirects: false` и закреплённые адреса: параметры, переданные в `send()`, их не переопределят (остальные, например `stream` или `timeout`, проходят).
-- Политика оценивает IPv4 внутри IPv6 по вложенному IPv4 и отвергает странные записи (`127.1`, `2130706433`, `0x7f.0.0.1` системный резолвер разворачивает в `127.0.0.1`, и они отвергаются).
+- Разрешает имя один раз (IPv4 и IPv6), проверяет **каждый** адрес (один непубличный среди публичных — отказ всему узлу) и передаёт cURL ровно эти адреса. TLS по-прежнему сверяет сертификат с именем узла.
+- Использует только cURL-обработчик: потоковый обработчик Guzzle, не знающий закреплённых адресов, недостижим. Ни опции запроса, ни Guzzle-клиент, ни cURL-опции снаружи не принимаются.
+- Не берёт прокси из окружения (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` и строчные варианты — их читают и Guzzle, и libcurl): прокси используется, только если передан `proxy:`.
+- Ограничивает тело (после распаковки) по умолчанию.
+- Пускает только `http` и `https`; отвергает URL без узла. Сообщения отказов называют причину, но не адрес.
+- Переадресации — только через `RedirectFollower`, который закрепляет каждый переход заново.
 
 Чего не может:
 
-- **Закрепление требует обработчика cURL.** У клиента Guzzle на потоковом обработчике список адресов игнорируется. Не передавайте такой клиент.
-- Настроенный HTTP-прокси (`HTTP_PROXY` и подобные или параметр клиента `proxy`) означает, что соединяется прокси, а не cURL; тогда границей SSRF служит прокси. Используйте egress-прокси, отвергающий внутренние адреса, либо никакого.
-- Имя разрешает системный резолвер до работы политики; враждебный резолвер вне модели угроз.
-- Размер ответа не ограничивает: передайте `stream` и читайте ограниченный объём либо задайте предел в коде, читающем тело.
+- С явным `proxy:` к цели подключается прокси, а не cURL: тогда SSRF-граница — прокси. Используйте egress-прокси, который не пускает во внутренние адреса.
+- Имя разрешает системный резолвер до проверки политикой; враждебный резолвер вне модели угроз, и клиентского таймаута DNS нет (действуют настройки резолвера ОС).
+- `timeoutSeconds` ограничивает передачу, но не разрешение имени.
 
 ## Примеры
 

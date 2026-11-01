@@ -42,7 +42,7 @@ $client = new PinnedClient(); // только публичные адреса, I
 try {
     $response = (new RedirectFollower($client))->sendRequest(new Request('GET', $untrustedUrl));
 } catch (RequestRefused $refused) {
-    $refused->reason; // Refusal::UnsupportedScheme | MissingHost | Unresolvable | AddressNotAllowed
+    $refused->reason; // Refusal::UnsupportedScheme | MissingHost | AddressNotAllowed
 } catch (ResponseTooLarge $tooLarge) {
     // тело (после распаковки) превысило maxBodyBytes; передача оборвана
 } catch (ClientException $failed) {
@@ -84,10 +84,11 @@ $quick = $client->withTimeouts(2.0, 1.0);
 | `SystemResolver` | Резолвер по умолчанию: IPv4 через `gethostbynamel()` (учитывает `/etc/hosts`) и IPv6 по AAAA-записям |
 | `ClientException` | Абстрактный предок всего, что бросают клиенты; `ClientExceptionInterface`, `getRequest()` |
 | `RequestRefused` | Не отправлен; `RequestExceptionInterface`; `$reason` — кейс `Refusal` |
+| `ResolutionFailed` | Имя не разрешилось; `NetworkExceptionInterface` (может быть временным: системный резолвер не отличает NXDOMAIN от SERVFAIL или таймаута) |
 | `TransferFailed` | Отправлен, но не удался (соединение, TLS, таймаут); `NetworkExceptionInterface`, причина в `getPrevious()` |
 | `ResponseTooLarge` | Тело превысило `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
 | `TooManyRedirects` | Переходов больше `maxRedirects`; `RequestExceptionInterface`, `$limit` |
-| `Refusal` | `UnsupportedScheme`, `MissingHost`, `Unresolvable`, `AddressNotAllowed` |
+| `Refusal` | `UnsupportedScheme`, `MissingHost`, `AddressNotAllowed` |
 
 ### Политика по умолчанию
 

@@ -100,7 +100,8 @@ final readonly class PinnedClient implements ClientInterface
     }
 
     /**
-     * @throws RequestRefused схема, узел, разрешение имени или политика не пустили запрос
+     * @throws RequestRefused схема, узел или политика не пустили запрос
+     * @throws ResolutionFailed имя не разрешилось (возможно, временно)
      * @throws ResponseTooLarge тело превысило потолок
      * @throws TransferFailed соединение, TLS или таймаут
      */
@@ -124,7 +125,7 @@ final readonly class PinnedClient implements ClientInterface
         $addresses = $literal ? [$host] : $this->resolver->resolve($host);
 
         if ($addresses === []) {
-            throw new RequestRefused($request, Refusal::Unresolvable);
+            throw new ResolutionFailed($request);
         }
 
         foreach ($addresses as $address) {

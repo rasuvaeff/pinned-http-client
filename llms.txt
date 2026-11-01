@@ -14,7 +14,7 @@ composer require rasuvaeff/pinned-http-client
 - The client builds its own transport: cURL handler only, no proxy from the environment, no redirects, body bounded (decompressed, default 10 MiB). It takes no Guzzle client, request options or cURL options
 - Redirects: wrap it in `RedirectFollower` — every hop is resolved, checked and pinned again; 303 (and 301/302 for POST) → GET without body; credentials dropped on origin change; `maxRedirects` default 5
 - Only http and https; a URL without host is refused; a literal IP is only checked
-- Exceptions: abstract `ClientException` (`ClientExceptionInterface`, `getRequest()`): `RequestRefused` (`$reason`: `Refusal`), `TransferFailed` (`NetworkExceptionInterface`, cause in `getPrevious()`), `ResponseTooLarge` (`$limit`), `TooManyRedirects` (`$limit`)
+- Exceptions: abstract `ClientException` (`ClientExceptionInterface`, `getRequest()`): `RequestRefused` (`$reason`: `Refusal`, permanent), `ResolutionFailed` (`NetworkExceptionInterface`, possibly temporary DNS), `TransferFailed` (`NetworkExceptionInterface`, cause in `getPrevious()`), `ResponseTooLarge` (`$limit`), `TooManyRedirects` (`$limit`)
 - An explicit `proxy:` makes the proxy the SSRF boundary; DNS resolution has no client-side timeout
 
 ## API
@@ -37,7 +37,7 @@ $client->withTimeouts(2.0, 1.0);        // new client
 try {
     $response = (new RedirectFollower($client, maxRedirects: 5))->sendRequest(new Request('GET', $url));
 } catch (RequestRefused $refused) {
-    $refused->reason; // Refusal::UnsupportedScheme | MissingHost | Unresolvable | AddressNotAllowed
+    $refused->reason; // Refusal::UnsupportedScheme | MissingHost | AddressNotAllowed
 } catch (ResponseTooLarge $tooLarge) {
     $tooLarge->limit;
 } catch (ClientException $failed) {

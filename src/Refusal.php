@@ -17,9 +17,6 @@ enum Refusal
     /** В URL нет узла. */
     case MissingHost;
 
-    /** Имя не разрешилось ни в один адрес. */
-    case Unresolvable;
-
     /** Хотя бы один адрес узла не прошёл политику. */
     case AddressNotAllowed;
 }

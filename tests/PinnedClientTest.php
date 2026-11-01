@@ -13,6 +13,7 @@ use Rasuvaeff\PinnedHttpClient\PinnedClient;
 use Rasuvaeff\PinnedHttpClient\PublicAddresses;
 use Rasuvaeff\PinnedHttpClient\Refusal;
 use Rasuvaeff\PinnedHttpClient\RequestRefused;
+use Rasuvaeff\PinnedHttpClient\ResolutionFailed;
 use Rasuvaeff\PinnedHttpClient\ResponseTooLarge;
 use Rasuvaeff\PinnedHttpClient\Tests\Support\MapResolver;
 use Rasuvaeff\PinnedHttpClient\Tests\Support\StubUri;
@@ -30,6 +31,7 @@ use Testo\Test;
 #[Test]
 #[Covers(PinnedClient::class)]
 #[Covers(RequestRefused::class)]
+#[Covers(ResolutionFailed::class)]
 #[Covers(ClientException::class)]
 #[Covers(TransferFailed::class)]
 #[Covers(ResponseTooLarge::class)]
@@ -48,6 +50,20 @@ final class PinnedClientTest
         }
 
         throw new \LogicException('The request was not refused');
+    }
+
+    private function unresolved(PinnedClient $client, Request $request): void
+    {
+        try {
+            $client->sendRequest($request);
+        } catch (ResolutionFailed $failed) {
+            Assert::instanceOf($failed, NetworkExceptionInterface::class);
+            Assert::same([$failed->getRequest(), $failed->getMessage()], [$request, 'The host does not resolve']);
+
+            return;
+        }
+
+        throw new \LogicException('An unresolvable host was not reported');
     }
 
     private function client(MapResolver $resolver): PinnedClient
@@ -76,7 +92,7 @@ final class PinnedClientTest
         $resolver = new MapResolver([]);
         $request = (new Request('GET', 'http://a.test/'))->withUri(new StubUri('HTTP', 'a.test'));
 
-        Assert::same($this->refusal($this->client($resolver), $request), Refusal::Unresolvable);
+        $this->unresolved($this->client($resolver), $request);
         Assert::same($resolver->asked, ['a.test']);
     }
 
@@ -91,7 +107,7 @@ final class PinnedClientTest
     {
         $resolver = new MapResolver([]);
 
-        Assert::same($this->refusal($this->client($resolver), new Request('GET', 'https://nowhere.invalid/')), Refusal::Unresolvable);
+        $this->unresolved($this->client($resolver), new Request('GET', 'https://nowhere.invalid/'));
         Assert::same($resolver->asked, ['nowhere.invalid']);
     }
 
@@ -137,7 +153,6 @@ final class PinnedClientTest
         Assert::same($messages, [
             'Only http and https are fetched',
             'The URL has no host',
-            'The host does not resolve',
             'The host resolves to an address the policy does not allow',
         ]);
     }

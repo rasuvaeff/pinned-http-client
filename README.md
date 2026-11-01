@@ -42,7 +42,7 @@ $client = new PinnedClient(); // public addresses only, IPv4 + IPv6, 8 s / 4 s, 
 try {
     $response = (new RedirectFollower($client))->sendRequest(new Request('GET', $untrustedUrl));
 } catch (RequestRefused $refused) {
-    $refused->reason; // Refusal::UnsupportedScheme | MissingHost | Unresolvable | AddressNotAllowed
+    $refused->reason; // Refusal::UnsupportedScheme | MissingHost | AddressNotAllowed
 } catch (ResponseTooLarge $tooLarge) {
     // the body (decompressed) passed maxBodyBytes; the transfer was cut
 } catch (ClientException $failed) {
@@ -84,10 +84,11 @@ $quick = $client->withTimeouts(2.0, 1.0);
 | `SystemResolver` | The default resolver: IPv4 through `gethostbynamel()` (honours `/etc/hosts`) plus IPv6 AAAA records |
 | `ClientException` | Abstract parent of everything the clients throw; `ClientExceptionInterface`, `getRequest()` |
 | `RequestRefused` | Not sent; `RequestExceptionInterface`; `$reason` is a `Refusal` case |
+| `ResolutionFailed` | The host did not resolve; `NetworkExceptionInterface` (may be temporary: the system resolver does not tell NXDOMAIN from SERVFAIL or a timeout) |
 | `TransferFailed` | Sent but failed (connection, TLS, timeout); `NetworkExceptionInterface`, cause in `getPrevious()` |
 | `ResponseTooLarge` | The body passed `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
 | `TooManyRedirects` | More hops than `maxRedirects`; `RequestExceptionInterface`, `$limit` |
-| `Refusal` | `UnsupportedScheme`, `MissingHost`, `Unresolvable`, `AddressNotAllowed` |
+| `Refusal` | `UnsupportedScheme`, `MissingHost`, `AddressNotAllowed` |
 
 ### The default policy
 

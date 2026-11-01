@@ -11,6 +11,7 @@ use GuzzleHttp\Psr7\Request;
 use Rasuvaeff\PinnedHttpClient\PinnedClient;
 use Rasuvaeff\PinnedHttpClient\PublicAddresses;
 use Rasuvaeff\PinnedHttpClient\RequestRefused;
+use Rasuvaeff\PinnedHttpClient\ResolutionFailed;
 use Rasuvaeff\PinnedHttpClient\Resolver;
 
 $policy = new PublicAddresses();
@@ -38,5 +39,7 @@ foreach (['http://rebound.test/', 'http://mixed.test/', 'http://nowhere.test/', 
         echo str_pad($url, 44), "sent\n";
     } catch (RequestRefused $refused) {
         echo str_pad($url, 44), 'refused (', $refused->reason->name, '): ', $refused->getMessage(), "\n";
+    } catch (ResolutionFailed $unresolved) {
+        echo str_pad($url, 44), 'not resolved (may be temporary): ', $unresolved->getMessage(), "\n";
     }
 }

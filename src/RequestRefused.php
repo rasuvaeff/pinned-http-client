@@ -19,7 +19,6 @@ final class RequestRefused extends ClientException implements RequestExceptionIn
         parent::__construct($request, match ($reason) {
             Refusal::UnsupportedScheme => 'Only http and https are fetched',
             Refusal::MissingHost => 'The URL has no host',
-            Refusal::Unresolvable => 'The host does not resolve',
             Refusal::AddressNotAllowed => 'The host resolves to an address the policy does not allow',
         });
     }

@@ -31,7 +31,8 @@ Namespace `Rasuvaeff\PinnedHttpClient\`. Read `vendor/rasuvaeff/pinned-http-clie
    only with an `AddressPolicy` that names the exact extra address (a dev
    host), never `fn () => true` outside tests.
 5. **Catch by kind:** `RequestRefused` (`$reason`: not http(s), no host,
-   unresolvable, address not allowed — permanent), `ResponseTooLarge`,
+   address not allowed — permanent), `ResolutionFailed` (DNS — may be
+   temporary), `ResponseTooLarge`,
    `TransferFailed` (connection/TLS/timeout — usually transient),
    `TooManyRedirects`; all extend `ClientException`.
 

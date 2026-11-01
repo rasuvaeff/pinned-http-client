@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.0 — 2026-11-01
+
+- Stable release. The public API and behaviour are those of 0.3.0, checked
+  in the consumer pilot (cska-one, ecosystem-sandbox); from here on SemVer
+  applies strictly.
+
 ## 0.3.0 — 2026-11-01
 
 - **BC:** a host that does not resolve throws the new `ResolutionFailed`

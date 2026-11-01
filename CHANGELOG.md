@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- Mutation testing now counts code no test is credited for (`infection --with-uncovered`); added a test for the default redirect limit; the `PublicVisibility` mutator is off because its mutants on signature lines can never be covered. No `src/` changes.
+
 ## 1.0.0 — 2026-11-01
 
 - Stable release. The public API and behaviour are those of 0.3.0, checked

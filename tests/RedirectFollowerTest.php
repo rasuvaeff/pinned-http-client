@@ -64,6 +64,31 @@ final class RedirectFollowerTest
         });
     }
 
+    public function theDefaultLimitIsFiveRedirects(): void
+    {
+        $follower = new RedirectFollower(new PinnedClient(
+            policy: new LoopbackOnly(),
+            resolver: new MapResolver(['pinned.invalid' => ['127.0.0.1']]),
+            connectTimeoutSeconds: 2.0,
+        ));
+
+        Server::run(function (int $port) use ($follower): void {
+            $response = $follower->sendRequest(new Request('GET', 'http://pinned.invalid:' . $port . '/chain/5'));
+
+            Assert::same($response->getStatusCode(), 200);
+
+            try {
+                $follower->sendRequest(new Request('GET', 'http://pinned.invalid:' . $port . '/chain/6'));
+            } catch (TooManyRedirects $tooMany) {
+                Assert::same($tooMany->limit, 5);
+
+                return;
+            }
+
+            throw new \LogicException('The default redirect limit did not apply');
+        });
+    }
+
     public function aLongerChainIsRefused(): void
     {
         Server::run(function (int $port): void {

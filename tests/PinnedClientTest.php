@@ -4,233 +4,188 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\PinnedHttpClient\Tests;
 
-use Closure;
-use GuzzleHttp\Client;
-use GuzzleHttp\Exception\ConnectException;
-use GuzzleHttp\Handler\MockHandler;
-use GuzzleHttp\HandlerStack;
-use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Request;
-use GuzzleHttp\Psr7\Response;
+use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\NetworkExceptionInterface;
+use Psr\Http\Client\RequestExceptionInterface;
+use Rasuvaeff\PinnedHttpClient\ClientException;
 use Rasuvaeff\PinnedHttpClient\PinnedClient;
-use Rasuvaeff\PinnedHttpClient\PinningFailed;
 use Rasuvaeff\PinnedHttpClient\PublicAddresses;
+use Rasuvaeff\PinnedHttpClient\Refusal;
+use Rasuvaeff\PinnedHttpClient\RequestRefused;
+use Rasuvaeff\PinnedHttpClient\ResponseTooLarge;
+use Rasuvaeff\PinnedHttpClient\Tests\Support\MapResolver;
 use Rasuvaeff\PinnedHttpClient\Tests\Support\StubUri;
+use Rasuvaeff\PinnedHttpClient\TransferFailed;
 use Testo\Assert;
+use Testo\Assert\ExpectException;
 use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
 use Testo\Test;
 
+/**
+ * Отказы до отправки: сети они не требуют — запрос не уходит, если схема, узел, разрешение имени или политика его
+ * не пускают.
+ */
 #[Test]
 #[Covers(PinnedClient::class)]
-#[Covers(PinningFailed::class)]
+#[Covers(RequestRefused::class)]
+#[Covers(ClientException::class)]
+#[Covers(TransferFailed::class)]
+#[Covers(ResponseTooLarge::class)]
 final class PinnedClientTest
 {
-    /** @var list<array{request: \Psr\Http\Message\RequestInterface, options: array<string, mixed>}> */
-    private array $sent = [];
-
-    /**
-     * @param list<Response|\Throwable> $answers
-     * @param array<string, list<string>> $dns
-     */
-    private function client(array $answers = [], array $dns = [], ?Closure $resolver = null, float $timeout = 8.0, float $connect = 4.0): PinnedClient
-    {
-        $this->sent = [];
-        $stack = HandlerStack::create(new MockHandler($answers));
-        $stack->push(Middleware::history($this->sent));
-
-        return new PinnedClient(
-            policy: new PublicAddresses(),
-            timeoutSeconds: $timeout,
-            connectTimeoutSeconds: $connect,
-            guzzle: new Client(['handler' => $stack]),
-            resolver: $resolver ?? static fn(string $host): array => $dns[$host] ?? [],
-        );
-    }
-
-    private function refused(PinnedClient $client, string $url): string
+    private function refusal(PinnedClient $client, Request $request): Refusal
     {
         try {
-            $client->sendRequest(new Request('GET', $url));
-        } catch (PinningFailed $failure) {
-            Assert::instanceOf($failure, NetworkExceptionInterface::class);
-            Assert::same((string) $failure->getRequest()->getUri(), $url);
+            $client->sendRequest($request);
+        } catch (RequestRefused $refused) {
+            Assert::instanceOf($refused, RequestExceptionInterface::class);
+            Assert::instanceOf($refused, ClientExceptionInterface::class);
+            Assert::same($refused->getRequest(), $request);
 
-            return $failure->getMessage();
+            return $refused->reason;
         }
 
-        throw new \LogicException('The request to ' . $url . ' was sent');
+        throw new \LogicException('The request was not refused');
     }
 
-    public function aNameIsPinnedToTheAddressesThatPassedThePolicy(): void
+    private function client(MapResolver $resolver): PinnedClient
     {
-        $client = $this->client([new Response(200, [], 'ok')], ['example.com' => ['93.184.216.34', '93.184.216.35']]);
-
-        $response = $client->sendRequest(new Request('GET', 'https://example.com/a?b=1'));
-
-        Assert::same([$response->getStatusCode(), (string) $response->getBody()], [200, 'ok']);
-        Assert::same(\count($this->sent), 1);
-        Assert::same($this->sent[0]['options']['curl'][CURLOPT_RESOLVE], ['example.com:443:93.184.216.34,93.184.216.35']);
+        return new PinnedClient(policy: new PublicAddresses(), resolver: $resolver);
     }
 
-    public function theExplicitPortAndTheSchemeDefaultDecideThePinnedPort(): void
+    #[DataProvider('schemeProvider')]
+    public function onlyHttpAndHttpsAreFetched(string $url): void
     {
-        $client = $this->client([new Response(200), new Response(200), new Response(200)], ['a.test' => ['8.8.8.8']]);
+        $resolver = new MapResolver([]);
 
-        $client->sendRequest(new Request('GET', 'http://a.test/'));
-        $client->sendRequest(new Request('GET', 'https://a.test/'));
-        $client->sendRequest(new Request('GET', 'http://a.test:8080/'));
-
-        Assert::same(
-            array_map(static fn(array $entry): mixed => $entry['options']['curl'][CURLOPT_RESOLVE], $this->sent),
-            [['a.test:80:8.8.8.8'], ['a.test:443:8.8.8.8'], ['a.test:8080:8.8.8.8']],
-        );
+        Assert::same($this->refusal($this->client($resolver), new Request('GET', $url)), Refusal::UnsupportedScheme);
+        Assert::same($resolver->asked, []);
     }
 
-    public function anAddressLiteralNeedsNoPinningButStillPassesThePolicy(): void
+    public static function schemeProvider(): iterable
     {
-        $client = $this->client([new Response(200)]);
-
-        $client->sendRequest(new Request('GET', 'http://8.8.8.8/'));
-
-        Assert::false(isset($this->sent[0]['options']['curl'][CURLOPT_RESOLVE]));
-        Assert::same($this->refused($client, 'http://127.0.0.1/'), 'The host resolves to a non-public address');
-        Assert::same($this->refused($client, 'http://[::1]/'), 'The host resolves to a non-public address');
-        Assert::same($this->refused($client, 'http://169.254.169.254/latest/meta-data/'), 'The host resolves to a non-public address');
+        yield 'ftp' => ['ftp://example.com/'];
+        yield 'file' => ['file:///etc/passwd'];
+        yield 'gopher' => ['gopher://example.com/'];
     }
 
-    public function aPublicIpv6LiteralIsAllowedAndIpv6AnswersOfAResolverAreBracketed(): void
+    public function theSchemeIsComparedCaseInsensitively(): void
     {
-        $client = $this->client([new Response(200), new Response(200)], ['v6.test' => ['2606:4700:4700::1111', '1.1.1.1']]);
+        $resolver = new MapResolver([]);
+        $request = (new Request('GET', 'http://a.test/'))->withUri(new StubUri('HTTP', 'a.test'));
 
-        $client->sendRequest(new Request('GET', 'http://[2606:4700:4700::1111]/'));
-        $client->sendRequest(new Request('GET', 'http://v6.test/'));
-
-        Assert::false(isset($this->sent[0]['options']['curl'][CURLOPT_RESOLVE]));
-        Assert::same($this->sent[1]['options']['curl'][CURLOPT_RESOLVE], ['v6.test:80:[2606:4700:4700::1111],1.1.1.1']);
+        Assert::same($this->refusal($this->client($resolver), $request), Refusal::Unresolvable);
+        Assert::same($resolver->asked, ['a.test']);
     }
 
-    public function oneNonPublicAddressAmongPublicOnesRefusesTheWholeHost(): void
+    public function aUrlWithoutAHostIsRefused(): void
     {
-        $client = $this->client([new Response(200)], ['mixed.test' => ['8.8.8.8', '10.0.0.5']]);
+        $request = (new Request('GET', 'http://a.test/'))->withUri(new StubUri());
 
-        Assert::same($this->refused($client, 'http://mixed.test/'), 'The host resolves to a non-public address');
-        Assert::same($this->sent, []);
-    }
-
-    public function aNameThatResolvesToAnInternalAddressIsNeverRequested(): void
-    {
-        $client = $this->client([new Response(200)], ['rebound.test' => ['127.0.0.1'], 'meta.test' => ['169.254.169.254']]);
-
-        Assert::same($this->refused($client, 'http://rebound.test/'), 'The host resolves to a non-public address');
-        Assert::same($this->refused($client, 'http://meta.test/'), 'The host resolves to a non-public address');
-        Assert::same($this->sent, []);
+        Assert::same($this->refusal($this->client(new MapResolver([])), $request), Refusal::MissingHost);
     }
 
     public function aHostThatDoesNotResolveIsRefused(): void
     {
-        $client = $this->client([new Response(200)]);
+        $resolver = new MapResolver([]);
 
-        Assert::same($this->refused($client, 'http://nowhere.test/'), 'The host does not resolve');
-        Assert::same($this->sent, []);
+        Assert::same($this->refusal($this->client($resolver), new Request('GET', 'https://nowhere.invalid/')), Refusal::Unresolvable);
+        Assert::same($resolver->asked, ['nowhere.invalid']);
     }
 
-    public function onlyHttpAndHttpsAreFetchedWhateverTheCase(): void
+    public function aNameThatResolvesToAnInternalAddressIsRefused(): void
     {
-        $client = $this->client([new Response(200), new Response(200)], ['a.test' => ['8.8.8.8']]);
+        $client = $this->client(new MapResolver(['meta.invalid' => ['169.254.169.254']]));
 
-        foreach (['ftp://a.test/', 'file:///etc/passwd', 'gopher://a.test/', 'data:text/plain,x'] as $url) {
-            Assert::same($this->refused($client, $url), 'Only http and https are fetched');
-        }
-
-        $hostless = (new Request('GET', 'http://a.test/'))->withUri(new StubUri());
-
-        try {
-            $client->sendRequest($hostless);
-
-            throw new \LogicException('A request without a host was sent');
-        } catch (PinningFailed $failure) {
-            Assert::same($failure->getMessage(), 'The URL has no host');
-        }
-
-        $client->sendRequest((new Request('GET', 'http://a.test/'))->withUri(new StubUri('HTTP', 'a.test')));
-        $client->sendRequest(new Request('GET', 'HTTP://a.test/'));
-        Assert::same(\count($this->sent), 2);
+        Assert::same($this->refusal($client, new Request('GET', 'http://meta.invalid/')), Refusal::AddressNotAllowed);
     }
 
-    public function theCallerCannotOverridePinningOrRedirectsButMayAddOtherOptions(): void
+    public function oneInternalAddressAmongPublicOnesRefusesTheHost(): void
     {
-        $client = $this->client([new Response(200)], ['a.test' => ['8.8.8.8']]);
+        $client = $this->client(new MapResolver(['mixed.invalid' => ['93.184.216.34', '2606:4700::1', '10.0.0.1']]));
 
-        $client->send(new Request('GET', 'http://a.test/'), [
-            'allow_redirects' => true,
-            'curl' => [CURLOPT_RESOLVE => ['a.test:80:10.0.0.1'], CURLOPT_TCP_NODELAY => true],
-            'stream' => true,
-        ]);
-
-        $options = $this->sent[0]['options'];
-        Assert::same($options['allow_redirects'], expected: false);
-        Assert::same($options['curl'][CURLOPT_RESOLVE], ['a.test:80:8.8.8.8']);
-        Assert::same($options['curl'][CURLOPT_TCP_NODELAY], expected: true);
-        Assert::same($options['stream'], expected: true);
+        Assert::same($this->refusal($client, new Request('GET', 'http://mixed.invalid/')), Refusal::AddressNotAllowed);
     }
 
-    public function aCallerResolveEntryIsDroppedForAnAddressLiteral(): void
+    #[DataProvider('literalProvider')]
+    public function anInternalAddressLiteralIsRefusedWithoutAskingTheResolver(string $url): void
     {
-        $client = $this->client([new Response(200)]);
+        $resolver = new MapResolver([]);
 
-        $client->send(new Request('GET', 'http://8.8.8.8/'), ['curl' => [CURLOPT_RESOLVE => ['8.8.8.8:80:10.0.0.1']]]);
-
-        Assert::false(isset($this->sent[0]['options']['curl'][CURLOPT_RESOLVE]));
+        Assert::same($this->refusal($this->client($resolver), new Request('GET', $url)), Refusal::AddressNotAllowed);
+        Assert::same($resolver->asked, []);
     }
 
-    public function timeoutsAndErrorStatusesAreLeftToTheCallerByDefault(): void
+    public static function literalProvider(): iterable
     {
-        $client = $this->client([new Response(404), new Response(200)], ['a.test' => ['8.8.8.8']], timeout: 3.5, connect: 1.5);
-
-        $notFound = $client->sendRequest(new Request('GET', 'http://a.test/'));
-        $client->send(new Request('GET', 'http://a.test/'), ['timeout' => 20.0]);
-
-        Assert::same($notFound->getStatusCode(), 404);
-        Assert::same([$this->sent[0]['options']['timeout'], $this->sent[0]['options']['connect_timeout'], $this->sent[0]['options']['http_errors']], [3.5, 1.5, false]);
-        Assert::same([$this->sent[1]['options']['timeout'], $this->sent[1]['options']['connect_timeout']], [20.0, 1.5]);
+        yield 'loopback' => ['http://127.0.0.1/'];
+        yield 'metadata' => ['http://169.254.169.254/latest/meta-data/'];
+        yield 'ipv6 loopback' => ['http://[::1]/'];
+        yield 'ipv4-mapped' => ['http://[::ffff:127.0.0.1]/'];
     }
 
-    public function aTransportFailureIsReportedAsAPinningFailureWithItsCause(): void
+    public function theRefusalMessagesNameTheReasonNotTheAddress(): void
     {
         $request = new Request('GET', 'http://a.test/');
-        $client = $this->client([new ConnectException('connection refused', $request)], ['a.test' => ['8.8.8.8']]);
+        $messages = array_map(
+            static fn(Refusal $reason): string => (new RequestRefused($request, $reason))->getMessage(),
+            Refusal::cases(),
+        );
+
+        Assert::same($messages, [
+            'Only http and https are fetched',
+            'The URL has no host',
+            'The host does not resolve',
+            'The host resolves to an address the policy does not allow',
+        ]);
+    }
+
+    public function transportAndSizeFailuresAreClientExceptionsOfTheirPsrKinds(): void
+    {
+        $request = new Request('GET', 'http://a.test/');
+        $cause = new \RuntimeException('cause');
+        $transfer = new TransferFailed($request, 'cURL error 7', $cause);
+        $large = new ResponseTooLarge($request, 1024);
+
+        Assert::instanceOf($transfer, NetworkExceptionInterface::class);
+        Assert::same([$transfer->getMessage(), $transfer->getPrevious(), $transfer->getRequest(), $transfer->getCode()], ['cURL error 7', $cause, $request, 0]);
+        Assert::instanceOf($large, RequestExceptionInterface::class);
+        Assert::instanceOf($large, ClientException::class);
+        Assert::same([$large->getMessage(), $large->limit], ['The response body exceeds 1024 bytes', 1024]);
+    }
+
+    #[DataProvider('invalidSettingsProvider')]
+    #[ExpectException(\InvalidArgumentException::class)]
+    public function invalidSettingsAreRejected(float $timeout, float $connect, ?int $maxBody, ?string $proxy): void
+    {
+        new PinnedClient(timeoutSeconds: $timeout, connectTimeoutSeconds: $connect, maxBodyBytes: $maxBody, proxy: $proxy);
+    }
+
+    public static function invalidSettingsProvider(): iterable
+    {
+        yield 'zero timeout' => [0.0, 1.0, null, null];
+        yield 'negative timeout' => [-1.0, 1.0, null, null];
+        yield 'nan timeout' => [\NAN, 1.0, null, null];
+        yield 'zero connect timeout' => [1.0, 0.0, null, null];
+        yield 'zero body limit' => [1.0, 1.0, 0, null];
+        yield 'empty proxy' => [1.0, 1.0, null, ''];
+    }
+
+    public function withersReturnANewClientAndValidateToo(): void
+    {
+        $client = new PinnedClient();
+
+        Assert::true($client->withMaxBodyBytes(1) !== $client);
+        Assert::true($client->withTimeouts(1.0, 1.0) !== $client);
 
         try {
-            $client->sendRequest($request);
-        } catch (PinningFailed $failure) {
-            Assert::same($failure->getMessage(), 'connection refused');
-            Assert::same($failure->getCode(), 0);
-            Assert::instanceOf($failure->getPrevious(), ConnectException::class);
-            Assert::same($failure->getRequest(), $request);
-
+            $client->withTimeouts(0.0, 1.0);
+        } catch (\InvalidArgumentException) {
             return;
         }
 
-        throw new \LogicException('The failure was swallowed');
-    }
-
-    public function theDefaultResolverAnswersForRealNames(): void
-    {
-        $client = new PinnedClient(policy: new PublicAddresses());
-
-        Assert::same($this->refusedBy($client, 'http://localhost/'), 'The host resolves to a non-public address');
-        Assert::same($this->refusedBy($client, 'http://no-such-host.invalid/'), 'The host does not resolve');
-    }
-
-    private function refusedBy(PinnedClient $client, string $url): string
-    {
-        try {
-            $client->sendRequest(new Request('GET', $url));
-        } catch (PinningFailed $failure) {
-            return $failure->getMessage();
-        }
-
-        throw new \LogicException('The request to ' . $url . ' was sent');
+        throw new \LogicException('withTimeouts() accepted a zero timeout');
     }
 }

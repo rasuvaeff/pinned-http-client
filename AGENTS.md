@@ -7,8 +7,11 @@ Guidance for AI agents working on this package. Read before changing code.
 PSR-18 client for URLs the application did not choose: `PinnedClient` resolves
 the host, checks every address with an `AddressPolicy` (`PublicAddresses` by
 default) and pins the connection to the checked addresses (`CURLOPT_RESOLVE`),
-so DNS rebinding cannot reach an internal host. No redirects. Refusals throw
-`PinningFailed`. Namespace `Rasuvaeff\PinnedHttpClient`.
+so DNS rebinding cannot reach an internal host. It builds its own transport
+(cURL only, no environment proxy, bounded body) and follows no redirects;
+`RedirectFollower` re-pins every hop. Everything thrown extends the abstract
+`ClientException` (`RequestRefused` with a `Refusal` reason, `TransferFailed`,
+`ResponseTooLarge`, `TooManyRedirects`). Namespace `Rasuvaeff\PinnedHttpClient`.
 
 The agent skill ships in `resources/skills/rasuvaeff-pinned-http-client/SKILL.md`
 (distributed via `llm/skills`, `extra.skills` in `composer.json`); keep it in
@@ -19,12 +22,16 @@ step with the public API.
 1. **Verification is mandatory.** Never claim "done" without a fresh green
    `composer build`. "Should work" does not count.
 2. **No suppressions.** No `@psalm-suppress`, no baseline. Fix the root cause.
-3. **Pinning cannot be undone from outside.** `allow_redirects` and the
-   `CURLOPT_RESOLVE` entry are set last in `send()`, after the caller's options;
-   every address the resolver returned goes through the policy, and one refused
-   address refuses the host. Never add a path that skips either, never make the
-   default policy more permissive without a test, and never log or echo the
-   resolved addresses of a refused request.
+3. **Pinning cannot be undone from outside.** The client builds its own
+   Guzzle transport (cURL handler only, `proxy: ''` unless `proxy:` is
+   given, `allow_redirects: false`, the `CURLOPT_RESOLVE` pin, the bounded
+   sink) and accepts no Guzzle client, request options or cURL options from
+   the caller. Every address the resolver returned goes through the policy,
+   and one refused address refuses the host. Never add a path that skips
+   either (no `send($options)`, no `guzzle:` parameter, no handler choice),
+   never make the default policy more permissive without a test, and never
+   log or echo the resolved addresses of a refused request. Every closed
+   bypass has a real-connection test in `RealConnectionTest` — keep it so.
 4. **Preserve the public contract.** Update README + tests with any API change.
 
 ## Commands
@@ -57,7 +64,25 @@ make release-check
 
 ## Invariants & gotchas
 
-<!-- Add package-specific invariants here -->
+- **The guarantees are tested with real connections, not with options.**
+  `tests/Support/Server.php` starts `php -S` on a free loopback port and
+  fails the test when it cannot (never a silent pass). `pinned.invalid` and
+  friends exist only in `MapResolver`; reaching them proves the pin, and a
+  resolver answer of `127.0.0.2` for `localhost` proves the connection does
+  not fall back to the system resolver.
+- **Guzzle's stream handler ignores `CURLOPT_RESOLVE`.** The default Guzzle
+  client routes `stream => true` (and some `crypto_method` fallbacks) to it,
+  which silently undid the pin in 0.1.0. Hence `new CurlHandler()` and no
+  request options from outside.
+- **libcurl reads proxy variables from the environment on its own**, not
+  only through Guzzle: the empty `proxy` option becomes `CURLOPT_PROXY => ''`,
+  which disables both. `aProxyFromTheEnvironmentIsNeverUsed` sets them.
+- **The body limit is a sink that refuses the crossing write** (cURL then
+  aborts with a write error, mapped to `ResponseTooLarge`). It sees
+  decompressed bytes. `BoundedSink` keeps untyped parameters to stay
+  compatible with `psr/http-message` 1.1 and 2.0.
+- **`SystemResolver` has no timeout and its AAAA branch is not covered by a
+  test** (no reliable IPv6 DNS in CI); its escaped mutants are expected.
 - Code: `declare(strict_types=1)`, `final readonly class`, `#[\Override]`,
   explicit types.
 - **Validation patterns anchor with `\z`, never `$`.** In PCRE `$` also matches
@@ -65,29 +90,6 @@ make release-check
   the value the whitelist was supposed to reject then travels on as if it were
   clean. `/D` does the same job. Cover it with a data-provider case carrying
   `"value\n"`, or the regression comes back unnoticed.
-<!-- If this package ships yiisoft/db-migration migrations, keep these too;
-     delete otherwise. Full rationale: "Пакеты с миграциями" in the monorepo
-     AGENTS.md. -->
-- **Migrations live in `src/Migration/` under the package namespace**, never as
-  a global class in `migrations/`: a class outside PSR-4 is not autoloadable, so
-  any DI definition mentioning it makes `Yiisoft\Di\Container` fatal at build
-  time in every request. Register with
-  `MigrationService::setSourceNamespaces()`, not `setSourcePaths()`.
-- **The table name is a typed value object, never a scalar.**
-  `yiisoft/db-migration` builds migrations through `Injector::make()`, which
-  resolves arguments by name or by type and never reads a container definition
-  keyed by the migration's own class — a `string $table` has no type to resolve,
-  so `M...::class => ['__construct()' => ['table' => …]]` silently yields the
-  default. `config/di.php` builds the VO from params and passes it to the
-  migration *and* the runtime class, so the two cannot disagree; index names are
-  derived from it (PostgreSQL scopes index names per schema, not per table).
-- **Test the migration through the real `Injector`**, with and without a
-  container binding, and assert the created column set plus each index's
-  columns — migrations under `src/` are mutated by infection, and
-  `ArrayItemRemoval` in `createTable`/`createIndex` escapes otherwise.
-- Changing a migration's FQCN is a **major** and needs `UPGRADE.md`
-  (`UPDATE migration SET name = …` before the first `migrate:up`). `bc-check`
-  stays silent — the old class was outside PSR-4, so roave never saw it.
 - `examples/` is part of the public contract: keep scripts runnable and update
   `examples/README.md` when example usage changes.
 - **CI workflows are SHA-pinned.** Every `uses:` in `.github/workflows/*.yml`

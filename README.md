@@ -19,7 +19,7 @@ A URL checked as `https://example.com/` is still dangerous when the connection i
 ## Requirements
 
 - PHP 8.3-8.5 with `curl` and `filter`
-- `guzzlehttp/guzzle` ^7.9 with its cURL handler (the default when `ext-curl` is loaded), `psr/http-client`, `psr/http-message`
+- `guzzlehttp/guzzle` ^7.9 and `guzzlehttp/psr7` ^2.7 (used internally, never exposed), `psr/http-client`, `psr/http-message`
 
 ## Installation
 
@@ -31,34 +31,67 @@ composer require rasuvaeff/pinned-http-client
 
 ```php
 use GuzzleHttp\Psr7\Request;
+use Rasuvaeff\PinnedHttpClient\ClientException;
 use Rasuvaeff\PinnedHttpClient\PinnedClient;
-use Rasuvaeff\PinnedHttpClient\PinningFailed;
+use Rasuvaeff\PinnedHttpClient\RedirectFollower;
+use Rasuvaeff\PinnedHttpClient\RequestRefused;
+use Rasuvaeff\PinnedHttpClient\ResponseTooLarge;
 
-$client = new PinnedClient(); // PublicAddresses policy, 8 s total, 4 s connect
+$client = new PinnedClient(); // public addresses only, IPv4 + IPv6, 8 s / 4 s, body <= 10 MiB, no proxy
 
 try {
-    $response = $client->sendRequest(new Request('GET', $untrustedUrl));
-} catch (PinningFailed $refused) {
-    // not http(s), no host, does not resolve, resolves to a non-public address, or the transport failed
+    $response = (new RedirectFollower($client))->sendRequest(new Request('GET', $untrustedUrl));
+} catch (RequestRefused $refused) {
+    $refused->reason; // Refusal::UnsupportedScheme | MissingHost | Unresolvable | AddressNotAllowed
+} catch (ResponseTooLarge $tooLarge) {
+    // the body (decompressed) passed maxBodyBytes; the transfer was cut
+} catch (ClientException $failed) {
+    // TransferFailed (connection, TLS, timeout) or TooManyRedirects
 }
 ```
 
-It is a plain `Psr\Http\Client\ClientInterface`, so it plugs into anything that takes one, for example the `Fetcher` of `rasuvaeff/link-preview`, a webhook sender or your own fetch code.
+Both are plain `Psr\Http\Client\ClientInterface`, so they plug into anything that takes one, for example the `Fetcher` of `rasuvaeff/link-preview`, a webhook sender or your own fetch code.
 
-**Redirects are not followed** (`allow_redirects` is forced to `false`): a redirect target is a new untrusted URL. Follow redirects in the calling code and send each hop through the client again, so every hop is resolved, checked and pinned (the `Fetcher` of `rasuvaeff/link-preview` does exactly that).
+The client builds its own transport and never takes yours: a Guzzle client you pass could use the stream handler (which ignores the pinned addresses), a proxy or redirects, and the guarantee would be gone. What you can configure is typed:
+
+```php
+$client = new PinnedClient(
+    policy: new PublicAddresses(),      // AddressPolicy::allows(string $address): bool
+    resolver: new SystemResolver(),     // Resolver::resolve(string $host): list<string>
+    timeoutSeconds: 8.0,
+    connectTimeoutSeconds: 4.0,
+    maxBodyBytes: PinnedClient::DEFAULT_MAX_BODY_BYTES, // null: no limit
+    proxy: null,                        // 'http://egress:3128' to opt in
+);
+
+$small = $client->withMaxBodyBytes(512 * 1024);
+$quick = $client->withTimeouts(2.0, 1.0);
+```
+
+**The body limit counts decompressed bytes**: a gzip bomb is cut at the limit, not after it unpacked. A body up to the limit is returned as the response body; one byte more ends the transfer with `ResponseTooLarge`.
+
+**Redirects** are never followed by `PinnedClient` itself: a redirect target is a new untrusted URL. `RedirectFollower` follows them by sending every hop through the pinned client again (resolve, check, pin), turns `303` (and `301`/`302` for `POST`) into a `GET` without a body, drops `Authorization`, `Cookie` and `Proxy-Authorization` when the origin changes, and stops after `maxRedirects` (default 5) with `TooManyRedirects`.
 
 ### Public API
 
 | Class | Description |
 |---|---|
-| `PinnedClient` | PSR-18 client: resolve, check every address, pin the connection. `send($request, $guzzleOptions)` adds Guzzle options such as `stream` |
+| `PinnedClient` | PSR-18 client: resolve, check every address, pin the connection, bound the body. `withMaxBodyBytes()`, `withTimeouts()` |
+| `RedirectFollower` | PSR-18 decorator over `PinnedClient`: every hop pinned again, method and credential rules, hop limit |
 | `AddressPolicy` | `allows(string $address): bool`; your own rules go here |
 | `PublicAddresses` | The default policy: only public addresses |
-| `PinningFailed` | `NetworkExceptionInterface`; the request and the cause are attached |
+| `Resolver` | `resolve(string $host): list<string>` |
+| `SystemResolver` | The default resolver: IPv4 through `gethostbynamel()` (honours `/etc/hosts`) plus IPv6 AAAA records |
+| `ClientException` | Abstract parent of everything the clients throw; `ClientExceptionInterface`, `getRequest()` |
+| `RequestRefused` | Not sent; `RequestExceptionInterface`; `$reason` is a `Refusal` case |
+| `TransferFailed` | Sent but failed (connection, TLS, timeout); `NetworkExceptionInterface`, cause in `getPrevious()` |
+| `ResponseTooLarge` | The body passed `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
+| `TooManyRedirects` | More hops than `maxRedirects`; `RequestExceptionInterface`, `$limit` |
+| `Refusal` | `UnsupportedScheme`, `MissingHost`, `Unresolvable`, `AddressNotAllowed` |
 
 ### The default policy
 
-`PublicAddresses` refuses private networks (`10/8`, `172.16/12`, `192.168/16`), loopback, link-local (`169.254/16`, which holds the cloud metadata address), CGNAT (`100.64/10`), documentation and benchmark ranges, multicast, the reserved and broadcast ranges, and for IPv6 the unspecified, loopback, unique-local (`fc00::/7`), link-local (`fe80::/10`), site-local, multicast, Teredo, 6to4 and documentation ranges. An IPv6 address that carries an IPv4 one (`::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`) is judged as that IPv4. Anything that is not a canonical IP text is refused.
+`PublicAddresses` refuses private networks (`10/8`, `172.16/12`, `192.168/16`), loopback, link-local (`169.254/16`, which holds the cloud metadata address), CGNAT (`100.64/10`), documentation and benchmark ranges, multicast, the reserved and broadcast ranges, and for IPv6 the IPv4-compatible block `::/96` (with `::` and `::1`), SIIT `::ffff:0:0:0/96`, unique-local (`fc00::/7`), link-local (`fe80::/10`), site-local, multicast, Teredo, 6to4 and the documentation ranges `2001:db8::/32` and `3fff::/20`. An IPv6 address that carries an IPv4 one (`::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`) is judged as that IPv4. Anything that is not a canonical IP text is refused.
 
 A stricter or looser rule is an `AddressPolicy` of your own, for instance one that lets a development host through:
 
@@ -78,35 +111,22 @@ final readonly class PublicOrLoopback implements AddressPolicy
 $client = new PinnedClient(policy: new PublicOrLoopback(new PublicAddresses()));
 ```
 
-### Resolver, timeouts, Guzzle client
-
-```php
-$client = new PinnedClient(
-    policy: new PublicAddresses(),
-    timeoutSeconds: 5.0,
-    connectTimeoutSeconds: 2.0,
-    guzzle: new \GuzzleHttp\Client(),            // your own client, with the cURL handler
-    resolver: static fn (string $host): array => $myDns->ipv4($host), // list of address texts
-);
-```
-
-The default resolver is `gethostbynamel()`: IPv4 only, as the system resolver answers. A literal IP in the URL needs no pinning; it only passes the policy.
-
 ## Security
 
 What it does:
 
-- Resolves the name once, checks **every** address (one non-public address among public ones refuses the host) and passes exactly those addresses to cURL. TLS still verifies the certificate against the host name.
-- Allows only `http` and `https`; refuses a URL without a host.
-- Forces `allow_redirects: false` and the pinned addresses: options given to `send()` cannot override them (other options, such as `stream` or `timeout`, are passed through).
-- Ships a policy that treats IPv4-in-IPv6 by the embedded IPv4 and refuses odd spellings (`127.1`, `2130706433`, `0x7f.0.0.1` resolve through the system resolver to `127.0.0.1` and are refused).
+- Resolves the name once (IPv4 and IPv6), checks **every** address (one non-public address among public ones refuses the host) and passes exactly those addresses to cURL. TLS still verifies the certificate against the host name.
+- Uses only the cURL handler: Guzzle's stream handler, which ignores the pinned addresses, is never reachable. No request option, Guzzle client or cURL option comes from outside.
+- Ignores proxy settings from the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and their lower-case forms, read by Guzzle and by libcurl): a proxy is used only when you pass `proxy:`.
+- Bounds the body (decompressed) by default.
+- Allows only `http` and `https`; refuses a URL without a host. Refusal messages name the reason, never the address.
+- Follows redirects only through `RedirectFollower`, which pins every hop again.
 
 What it cannot do:
 
-- **Pinning needs the cURL handler.** With a Guzzle client built on the stream handler the address list is ignored. Do not pass such a client.
-- A configured HTTP proxy (`HTTP_PROXY` and friends, or the client's `proxy` option) means the proxy connects, not cURL; then the proxy is your SSRF boundary. Use an egress proxy that refuses internal destinations, or none.
-- The name is resolved by the system resolver before the policy runs; a hostile resolver is out of scope.
-- It does not limit the size of the response: pass `stream` and read a bounded amount, or set a limit in the code that reads the body.
+- With an explicit `proxy:` the proxy connects to the target, not cURL: then the proxy is your SSRF boundary. Use an egress proxy that refuses internal destinations.
+- The name is resolved by the system resolver before the policy runs; a hostile resolver is out of scope, and there is no client-side DNS timeout (the OS resolver settings apply).
+- `timeoutSeconds` bounds the transfer; it does not bound DNS resolution.
 
 ## Examples
 

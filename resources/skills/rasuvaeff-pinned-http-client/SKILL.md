@@ -5,7 +5,8 @@ description: >-
   resolves the host, checks every address with an AddressPolicy
   (PublicAddresses by default) and pins the connection to the checked
   addresses through CURLOPT_RESOLVE, so DNS rebinding cannot reach an
-  internal host; no redirects; PinningFailed on refusal. Use when writing,
+  internal host; bounded body, no environment proxy; RedirectFollower re-pins
+  every redirect hop; RequestRefused/TransferFailed/ResponseTooLarge. Use when writing,
   reviewing or debugging code that makes an HTTP request to a URL chosen by a
   user or a third party (webhooks, link previews, image fetching, importers)
   in a project that has this package installed.
@@ -20,31 +21,36 @@ Namespace `Rasuvaeff\PinnedHttpClient\`. Read `vendor/rasuvaeff/pinned-http-clie
 1. **Checking the host name is not an SSRF defence.** Send an untrusted URL
    through `PinnedClient`, never through a bare Guzzle/curl client after a
    string check of the URL.
-2. **Follow redirects yourself.** The client forces `allow_redirects: false`;
-   send every redirect target through the client again so each hop is
-   resolved, checked and pinned.
-3. **Pinning needs the cURL handler.** A Guzzle client on the stream handler
-   ignores the pinned addresses; do not inject one. A configured proxy makes
-   the proxy the boundary.
+2. **Follow redirects with `RedirectFollower`** (or send every hop through
+   the client yourself); `PinnedClient` never follows them.
+3. **The client owns its transport.** There is no way to pass a Guzzle
+   client, request options or cURL options — that is the guarantee. Tune it
+   with `maxBodyBytes`, timeouts and `withMaxBodyBytes()`/`withTimeouts()`.
+   An explicit `proxy:` makes the proxy the boundary.
 4. **A weaker policy is a security decision.** Keep `PublicAddresses`; widen it
    only with an `AddressPolicy` that names the exact extra address (a dev
    host), never `fn () => true` outside tests.
-5. **Catch `PinningFailed`** (a `NetworkExceptionInterface`): it means no
-   public address, wrong scheme, no host or a transport failure; the cause is
-   `getPrevious()`.
+5. **Catch by kind:** `RequestRefused` (`$reason`: not http(s), no host,
+   unresolvable, address not allowed — permanent), `ResponseTooLarge`,
+   `TransferFailed` (connection/TLS/timeout — usually transient),
+   `TooManyRedirects`; all extend `ClientException`.
 
 ## Use
 
 ```php
 use GuzzleHttp\Psr7\Request;
+use Rasuvaeff\PinnedHttpClient\ClientException;
 use Rasuvaeff\PinnedHttpClient\PinnedClient;
-use Rasuvaeff\PinnedHttpClient\PinningFailed;
+use Rasuvaeff\PinnedHttpClient\RedirectFollower;
+use Rasuvaeff\PinnedHttpClient\RequestRefused;
 
-$client = new PinnedClient(timeoutSeconds: 5.0, connectTimeoutSeconds: 2.0);
+$client = new RedirectFollower(new PinnedClient(timeoutSeconds: 5.0, connectTimeoutSeconds: 2.0, maxBodyBytes: 2_000_000));
 
 try {
     $response = $client->sendRequest(new Request('GET', $untrustedUrl));
-} catch (PinningFailed $refused) {
-    // refuse or retry later; do not fall back to an unchecked client
+} catch (RequestRefused $refused) {
+    // permanent: do not retry
+} catch (ClientException $failed) {
+    // retry later; do not fall back to an unchecked client
 }
 ```

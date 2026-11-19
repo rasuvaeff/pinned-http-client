@@ -46,7 +46,7 @@ try {
 } catch (ResponseTooLarge $tooLarge) {
     // тело (после распаковки) превысило maxBodyBytes; передача оборвана
 } catch (ClientException $failed) {
-    // TransferFailed (соединение, TLS, таймаут) или TooManyRedirects
+    // TransferFailed (соединение, TLS, таймаут), ResolutionFailed (DNS) или TooManyRedirects
 }
 ```
 

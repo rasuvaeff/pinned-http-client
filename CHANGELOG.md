@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- README and `llms.txt` samples: the catch-all comment now lists `ResolutionFailed` (#6).
+
 - Mutation testing now counts code no test is credited for (`infection --with-uncovered`); added a test for the default redirect limit; the `PublicVisibility` mutator is off because its mutants on signature lines can never be covered. No `src/` changes.
 
 ## 1.0.0 — 2026-11-01

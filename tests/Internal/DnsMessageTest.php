@@ -144,7 +144,7 @@ final class DnsMessageTest
     {
         // qdcount=1, но секция вопроса урезана: разбор вопроса не находит конца имени
         // вопрос урезан внутри метки: имя идёт за конец сообщения
-        $query = DnsMessage::encodeQuery('example.test', DnsMessage::TYPE_A, 13);
+        DnsMessage::encodeQuery('example.test', DnsMessage::TYPE_A, 13);
         $message = "\x00\x0d" . "\x81\x80"
             . "\x00\x01" . "\x00\x01" . "\x00\x00" . "\x00\x00"
             . "\x07exampl";

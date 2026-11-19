@@ -155,9 +155,7 @@ final class DnsMessage
                     throw new InvalidDnsResponse('The compression pointer loops');
                 }
 
-                if ($resume === null) {
-                    $resume = $next + 2;
-                }
+                $resume ??= $next + 2;
 
                 $next = (($size & 0x3F) << 8) | ord($message[$next + 1]);
 

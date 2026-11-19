@@ -39,7 +39,6 @@ final class DnsShim
  * Тень `gethostbynamel()`: вызывается только из {@see SystemResolver} и только пока
  * {@see DnsShim::$active}.
  *
- * @param string $hostname
  *
  * @return list<string>|false
  */
@@ -55,7 +54,6 @@ function gethostbynamel(string $hostname): array|false
 /**
  * Тень `dns_get_record()` в объёме, который использует {@see SystemResolver}.
  *
- * @param string $hostname
  * @param int $type ожидается DNS_AAAA; другой тип уходит в настоящую функцию
  *
  * @return list<array{ipv6: string}>|false

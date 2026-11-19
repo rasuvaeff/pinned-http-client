@@ -23,11 +23,7 @@ final readonly class MetadataFetcher
 {
     public const int DEFAULT_TTL_SECONDS = 300;
 
-    private ?CacheInterface $cache;
-
     private int $defaultTtlSeconds;
-
-    private bool $allowHttp;
 
     /**
      * @param ClientInterface $client транспорт; обычно {@see PinnedClient}
@@ -37,17 +33,14 @@ final readonly class MetadataFetcher
      */
     public function __construct(
         private ClientInterface $client,
-        ?CacheInterface $cache = null,
+        private ?CacheInterface $cache = null,
         int $defaultTtlSeconds = self::DEFAULT_TTL_SECONDS,
-        bool $allowHttp = false,
+        private bool $allowHttp = false,
     ) {
         if ($defaultTtlSeconds < 1) {
             throw new \InvalidArgumentException('The default TTL must be positive');
         }
-
-        $this->cache = $cache;
         $this->defaultTtlSeconds = $defaultTtlSeconds;
-        $this->allowHttp = $allowHttp;
     }
 
     /**
@@ -80,10 +73,10 @@ final readonly class MetadataFetcher
         }
 
         // валидный URL всегда содержит «схему:»; всё до первого двоеточия и есть схема
-        $rawScheme = strstr($url, ':', true);
+        $rawScheme = strstr($url, ':', before_needle: true);
         $scheme = \is_string($rawScheme) ? strtolower($rawScheme) : '';
 
-        if ($scheme !== 'https' && !($this->allowHttp && $scheme === 'http')) {
+        if ($scheme !== 'https' && (!$this->allowHttp || $scheme !== 'http')) {
             throw new RequestRefused(new Request('GET', $url), Refusal::UnsupportedScheme);
         }
 
@@ -129,7 +122,6 @@ final readonly class MetadataFetcher
             return null;
         }
 
-        /** @var mixed $cached */
         $cached = $this->cache->get($cacheKey);
 
         return \is_array($cached) ? $cached : null;

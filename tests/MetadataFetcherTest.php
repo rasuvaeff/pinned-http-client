@@ -184,7 +184,7 @@ final class MetadataFetcherTest
         Assert::same($fetcher->fetchJson(self::URL), ['a' => 1]);
         Assert::same($ttl->last(), 120);
 
-        $oneShot = new MetadataFetcher(
+        new MetadataFetcher(
             $this->clientReturning(body: '{"b":2}', headers: ['Cache-Control' => 'NO-STORE']),
             cache: $cache,
         );
@@ -261,19 +261,19 @@ final class MetadataFetcherTest
         $client = Understudy::for(ClientInterface::class);
         when(fn() => $client->sendRequest(Arg::any()))->returns(new Response(status: 200, body: $payload));
         $fetcher = new MetadataFetcher($client);
-        $decoded = json_decode($payload, true);
+        $decoded = json_decode($payload, associative: true);
 
         if (\is_array($decoded)) {
-            Classify::cover(true, 'object-root', 5.0);
+            Classify::cover(condition: true, label: 'object-root', minPercent: 5.0);
             Assert::same($fetcher->fetchJson(self::URL), $decoded);
         } else {
-            Classify::cover(true, 'non-array-root', 5.0);
+            Classify::cover(condition: true, label: 'non-array-root', minPercent: 5.0);
 
             try {
                 $fetcher->fetchJson(self::URL);
                 Assert::same('InvalidMetadataDocument was expected', 'but nothing was thrown');
             } catch (InvalidMetadataDocument) {
-                Assert::true(true);
+                Assert::true(actual: true);
             }
         }
     }

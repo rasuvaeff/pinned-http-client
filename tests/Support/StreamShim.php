@@ -41,10 +41,6 @@ final class StreamShim
 /**
  * Тень `stream_socket_client()`.
  *
- * @param string $remote_socket
- * @param int|null $error_code
- * @param string|null $error_message
- * @param float|null $timeout
  *
  * @return resource|false
  */
@@ -94,20 +90,17 @@ function stream_set_timeout($stream, int $seconds, int $microseconds = 0): bool
  * Тень `fwrite()`.
  *
  * @param resource $stream
- * @param string $data
- *
- * @return int|false
  */
 function fwrite($stream, string $data): int|false
 {
     if (StreamShim::$written === null) {
         $result = \fwrite($stream, $data);
-        StreamShim::$log[] = sprintf('write %s', var_export($result, true));
+        StreamShim::$log[] = sprintf('write %s', var_export($result, return: true));
 
         return $result;
     }
 
-    StreamShim::$log[] = sprintf('write %s', var_export(StreamShim::$written, true));
+    StreamShim::$log[] = sprintf('write %s', var_export(StreamShim::$written, return: true));
 
     return StreamShim::$written;
 }
@@ -116,15 +109,12 @@ function fwrite($stream, string $data): int|false
  * Тень `fread()`.
  *
  * @param resource $stream
- * @param int $length
- *
- * @return string|false
  */
 function fread($stream, int $length): string|false
 {
     if (StreamShim::$read === null) {
         $result = \fread($stream, $length);
-        StreamShim::$log[] = sprintf('read %s', var_export($result, true));
+        StreamShim::$log[] = sprintf('read %s', var_export($result, return: true));
 
         return $result;
     }
@@ -137,7 +127,7 @@ function fread($stream, int $length): string|false
 
     // настоящий fread отдаёт не больше запрошенного: длинный ответ режется по $length
     $result = substr(StreamShim::$read, 0, $length);
-    StreamShim::$log[] = sprintf('read %s', var_export($result, true));
+    StreamShim::$log[] = sprintf('read %s', var_export($result, return: true));
 
     return $result;
 }

@@ -46,7 +46,7 @@ try {
 } catch (ResponseTooLarge $tooLarge) {
     // the body (decompressed) passed maxBodyBytes; the transfer was cut
 } catch (ClientException $failed) {
-    // TransferFailed (connection, TLS, timeout) or TooManyRedirects
+    // TransferFailed (connection, TLS, timeout), ResolutionFailed (DNS) or TooManyRedirects
 }
 ```
 

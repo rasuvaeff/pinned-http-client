@@ -41,7 +41,7 @@ try {
 } catch (ResponseTooLarge $tooLarge) {
     $tooLarge->limit;
 } catch (ClientException $failed) {
-    // TransferFailed | TooManyRedirects
+    // TransferFailed | ResolutionFailed | TooManyRedirects
 }
 
 (new PublicAddresses())->allows('169.254.169.254'); // false

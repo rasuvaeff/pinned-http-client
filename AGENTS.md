@@ -10,8 +10,8 @@ default) and pins the connection to the checked addresses (`CURLOPT_RESOLVE`),
 so DNS rebinding cannot reach an internal host. It builds its own transport
 (cURL only, no environment proxy, bounded body) and follows no redirects;
 `RedirectFollower` re-pins every hop. Everything thrown extends the abstract
-`ClientException` (`RequestRefused` with a `Refusal` reason, `TransferFailed`,
-`ResponseTooLarge`, `TooManyRedirects`). Namespace `Rasuvaeff\PinnedHttpClient`.
+`ClientException` (`RequestRefused` with a `Refusal` reason, `ResolutionFailed`,
+`TransferFailed`, `ResponseTooLarge`, `TooManyRedirects`). Namespace `Rasuvaeff\PinnedHttpClient`.
 
 The agent skill ships in `resources/skills/rasuvaeff-pinned-http-client/SKILL.md`
 (distributed via `llm/skills`, `extra.skills` in `composer.json`); keep it in

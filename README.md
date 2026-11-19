@@ -72,22 +72,55 @@ $quick = $client->withTimeouts(2.0, 1.0);
 
 **Redirects** are never followed by `PinnedClient` itself: a redirect target is a new untrusted URL. `RedirectFollower` follows them by sending every hop through the pinned client again (resolve, check, pin), turns `303` (and `301`/`302` for `POST`) into a `GET` without a body, drops `Authorization`, `Cookie` and `Proxy-Authorization` when the origin changes, and stops after `maxRedirects` (default 5) with `TooManyRedirects`.
 
+### Metadata documents
+
+JWKS, `/.well-known/*` and OIDC discovery are fetched by code that did not choose the URL either — but over and over each caller re-implements https-only checks, JSON decoding and `Cache-Control: max-age` caching on top of the client. `MetadataFetcher` does it once, on top of any `ClientInterface` (typically `PinnedClient`, so every pinned-address guarantee holds):
+
+```php
+use Rasuvaeff\PinnedHttpClient\MetadataFetcher;
+use Psr\SimpleCache\CacheInterface;
+
+$fetcher = new MetadataFetcher(
+    new PinnedClient(maxBodyBytes: 65_536), // metadata documents are small
+    cache: $psr16,                          // optional; null — every call goes to the network
+);
+
+$keys = $fetcher->fetchJson('https://auth.example.com/.well-known/jwks.json'); // array<array-key, mixed>
+```
+
+Only `https://` is fetched (`withAllowHttp()` opts out for purely local setups); the answer must be JSON (an object or an array — anything else is `InvalidMetadataDocument`); the PSR-16 cache honors `Cache-Control: max-age` and `no-store` (fall-back TTL 300 s). Transport failures (`RequestRefused`, `ResolutionFailed`, `ResponseTooLarge`, `TransferFailed`) bubble from the client untouched.
+
+### A resolver with a bounded DNS timeout
+
+`SystemResolver` delegates to the OS resolver, so its latency is whatever the OS is configured with — the client's `timeoutSeconds` bounds the transfer, not the resolution. `UdpDnsResolver` asks an explicitly configured DNS server (an IP literal, usually your local recursive resolver) directly over UDP and bounds the wait itself:
+
+```php
+use Rasuvaeff\PinnedHttpClient\UdpDnsResolver;
+
+$client = new PinnedClient(resolver: new UdpDnsResolver(server: '10.0.0.53', timeoutSeconds: 2.0));
+```
+
+Every failure — timeout, damaged reply, a foreign id, an error RCODE — yields an empty list, which the client reports as `ResolutionFailed`; addresses are collected from all A/AAAA records of the answer, including the CNAME chains a recursive server sends along. The transport is UDP by default (`StreamUdpTransport`); another one, for instance DNS over HTTPS, is any `DnsTransport` you hand to the constructor.
+
 ### Public API
 
 | Class | Description |
 |---|---|
 | `PinnedClient` | PSR-18 client: resolve, check every address, pin the connection, bound the body. `withMaxBodyBytes()`, `withTimeouts()` |
 | `RedirectFollower` | PSR-18 decorator over `PinnedClient`: every hop pinned again, method and credential rules, hop limit |
+| `MetadataFetcher` | JSON metadata documents (JWKS, `/.well-known/*`): https-only, PSR-16 cache with `max-age`, JSON-object decoding |
 | `AddressPolicy` | `allows(string $address): bool`; your own rules go here |
 | `PublicAddresses` | The default policy: only public addresses |
 | `Resolver` | `resolve(string $host): list<string>` |
-| `SystemResolver` | The default resolver: IPv4 through `gethostbynamel()` (honours `/etc/hosts`) plus IPv6 AAAA records |
+| `SystemResolver` | The default resolver: IPv4 through `gethostbynamel()` (honours `/etc/hosts`) plus IPv6 AAAA records; no client-side DNS timeout |
+| `UdpDnsResolver` | A resolver with a bounded DNS timeout: A + AAAA over UDP to an explicit server; `DnsTransport` for another transport |
 | `ClientException` | Abstract parent of everything the clients throw; `ClientExceptionInterface`, `getRequest()` |
 | `RequestRefused` | Not sent; `RequestExceptionInterface`; `$reason` is a `Refusal` case |
 | `ResolutionFailed` | The host did not resolve; `NetworkExceptionInterface` (may be temporary: the system resolver does not tell NXDOMAIN from SERVFAIL or a timeout) |
 | `TransferFailed` | Sent but failed (connection, TLS, timeout); `NetworkExceptionInterface`, cause in `getPrevious()` |
 | `ResponseTooLarge` | The body passed `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
 | `TooManyRedirects` | More hops than `maxRedirects`; `RequestExceptionInterface`, `$limit` |
+| `InvalidMetadataDocument` | The answer came, but is not a JSON object or array |
 | `Refusal` | `UnsupportedScheme`, `MissingHost`, `AddressNotAllowed` |
 
 ### The default policy
@@ -126,8 +159,8 @@ What it does:
 What it cannot do:
 
 - With an explicit `proxy:` the proxy connects to the target, not cURL: then the proxy is your SSRF boundary. Use an egress proxy that refuses internal destinations.
-- The name is resolved by the system resolver before the policy runs; a hostile resolver is out of scope, and there is no client-side DNS timeout (the OS resolver settings apply).
-- `timeoutSeconds` bounds the transfer; it does not bound DNS resolution.
+- The name is resolved by the system resolver before the policy runs; a hostile resolver is out of scope, and `SystemResolver` has no client-side DNS timeout (the OS resolver settings apply). `UdpDnsResolver` bounds the resolution itself when that matters.
+- `timeoutSeconds` bounds the transfer; with the default resolver it does not bound DNS resolution.
 
 ## Examples
 

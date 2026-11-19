@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `MetadataFetcher` (#8): JSON metadata documents (JWKS, `/.well-known/*`, OIDC discovery) over any `ClientInterface` — https-only, JSON decoding, PSR-16 cache honoring `Cache-Control: max-age` / `no-store`. New `InvalidMetadataDocument` exception; `psr/simple-cache` joins `require`.
+- `UdpDnsResolver` (#8): a `Resolver` with a bounded DNS timeout — A and AAAA queries over UDP to an explicitly configured server; CNAME chains followed; any failure is an empty list (`ResolutionFailed` at the client). Transport is injectable via the new `DnsTransport` interface; the default is `StreamUdpTransport`.
+
+### Changed
+
+- Tests: collaborators are now `rasuvaeff/understudy` doubles (registered via `understudy-testo` in `testo.php`); the DNS parser is exercised through precise binary fixtures, `SystemResolver` and `StreamUdpTransport` through namespace-level function shims instead of a real network.
+
 ## 1.0.1 — 2026-11-19
 
 ### Fixed

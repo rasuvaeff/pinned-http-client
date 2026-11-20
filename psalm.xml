@@ -10,4 +10,10 @@
             <directory name="vendor"/>
         </ignoreFiles>
     </projectFiles>
+    <!-- PSR-16 and json_decode return mixed; the is_array/is_string guards in
+         MetadataFetcher are the narrowing, and the mixed assignment itself is
+         not fixable in user code. Same issueHandler as yii3-settings. -->
+    <issueHandlers>
+        <MixedAssignment errorLevel="suppress"/>
+    </issueHandlers>
 </psalm>

@@ -72,22 +72,55 @@ $quick = $client->withTimeouts(2.0, 1.0);
 
 **Переадресации** сам `PinnedClient` не выполняет никогда: цель переадресации — новый недоверенный URL. `RedirectFollower` проходит их, отправляя каждый переход через закрепляющий клиент заново (разрешение, проверка, закрепление), превращает `303` (и `301`/`302` для `POST`) в `GET` без тела, убирает `Authorization`, `Cookie` и `Proxy-Authorization` при смене источника и останавливается после `maxRedirects` (по умолчанию 5) с `TooManyRedirects`.
 
+### Метаданные документов
+
+JWKS, `/.well-known/*` и OIDC discovery скачивает код, который URL тоже не выбирал, — и каждый раз заново переизобретает поверх клиента проверки https, разбор JSON и кэш по `Cache-Control: max-age`. `MetadataFetcher` делает это один раз поверх любого `ClientInterface` (обычно `PinnedClient` — тогда в силе все гарантии закрепления адресов):
+
+```php
+use Rasuvaeff\PinnedHttpClient\MetadataFetcher;
+use Psr\SimpleCache\CacheInterface;
+
+$fetcher = new MetadataFetcher(
+    new PinnedClient(maxBodyBytes: 65_536), // метаданные небольшие
+    cache: $psr16,                          // опционально; null — каждый вызов ходит по сети
+);
+
+$keys = $fetcher->fetchJson('https://auth.example.com/.well-known/jwks.json'); // array<array-key, mixed>
+```
+
+Ходит только на `https://` (`withAllowHttp()` — исключение для чисто локальных сценариев); ответ обязан быть 2xx с JSON-телом (объект или массив); любой другой статус или иное тело — `InvalidMetadataDocument`, в кэш такой ответ не попадает; кэш PSR-16 учитывает `Cache-Control: max-age` и `no-store` (TTL по умолчанию 300 с). Транспортные отказы (`RequestRefused`, `ResolutionFailed`, `ResponseTooLarge`, `TransferFailed`) всплывают от клиента без изменений.
+
+### Резолвер с ограниченным таймаутом DNS
+
+`SystemResolver` делегирует резолверу ОС, значит и латентность — какая настроена в ОС: клиентский `timeoutSeconds` ограничивает передачу, но не разрешение имени. `UdpDnsResolver` спрашивает явно заданный DNS-сервер (IP-литерал, обычно локальный рекурсивный резолвер) напрямую по UDP и сам ограничивает ожидание:
+
+```php
+use Rasuvaeff\PinnedHttpClient\UdpDnsResolver;
+
+$client = new PinnedClient(resolver: new UdpDnsResolver(server: '10.0.0.53', timeoutSeconds: 2.0));
+```
+
+Любая неудача — таймаут, повреждённый ответ, чужой id, ошибка RCODE — даёт пустой список, который клиент сообщает как `ResolutionFailed`; адреса собираются из всех A/AAAA-записей ответа, включая цепочки CNAME, которые рекурсивный сервер досылает сам. Транспорт — UDP по умолчанию (`StreamUdpTransport`); другой, например DNS over HTTPS, — любой свой `DnsTransport`, переданный конструктору.
+
 ### Публичный API
 
 | Класс | Описание |
 |---|---|
 | `PinnedClient` | PSR-18 клиент: разрешить, проверить каждый адрес, закрепить соединение, ограничить тело. `withMaxBodyBytes()`, `withTimeouts()` |
 | `RedirectFollower` | PSR-18 декоратор над `PinnedClient`: каждый переход закрепляется заново, правила метода и учётных данных, лимит переходов |
+| `MetadataFetcher` | JSON-документы метаданных (JWKS, `/.well-known/*`): только https, кэш PSR-16 с `max-age`, разбор JSON |
 | `AddressPolicy` | `allows(string $address): bool`; сюда — свои правила |
 | `PublicAddresses` | Политика по умолчанию: только публичные адреса |
 | `Resolver` | `resolve(string $host): list<string>` |
-| `SystemResolver` | Резолвер по умолчанию: IPv4 через `gethostbynamel()` (учитывает `/etc/hosts`) и IPv6 по AAAA-записям |
+| `SystemResolver` | Резолвер по умолчанию: IPv4 через `gethostbynamel()` (учитывает `/etc/hosts`) и IPv6 по AAAA-записям; клиентского таймаута DNS нет |
+| `UdpDnsResolver` | Резолвер с ограниченным таймаутом DNS: A + AAAA по UDP к явному серверу; `DnsTransport` — свой транспорт |
 | `ClientException` | Абстрактный предок всего, что бросают клиенты; `ClientExceptionInterface`, `getRequest()` |
 | `RequestRefused` | Не отправлен; `RequestExceptionInterface`; `$reason` — кейс `Refusal` |
 | `ResolutionFailed` | Имя не разрешилось; `NetworkExceptionInterface` (может быть временным: системный резолвер не отличает NXDOMAIN от SERVFAIL или таймаута) |
 | `TransferFailed` | Отправлен, но не удался (соединение, TLS, таймаут); `NetworkExceptionInterface`, причина в `getPrevious()` |
 | `ResponseTooLarge` | Тело превысило `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
 | `TooManyRedirects` | Переходов больше `maxRedirects`; `RequestExceptionInterface`, `$limit` |
+| `InvalidMetadataDocument` | Ответ дошёл, но непригоден: статус не 2xx либо тело не JSON-объект и не массив |
 | `Refusal` | `UnsupportedScheme`, `MissingHost`, `AddressNotAllowed` |
 
 ### Политика по умолчанию

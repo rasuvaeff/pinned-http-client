@@ -14,14 +14,16 @@ composer require rasuvaeff/pinned-http-client
 - The client builds its own transport: cURL handler only, no proxy from the environment, no redirects, body bounded (decompressed, default 10 MiB). It takes no Guzzle client, request options or cURL options
 - Redirects: wrap it in `RedirectFollower` — every hop is resolved, checked and pinned again; 303 (and 301/302 for POST) → GET without body; credentials dropped on origin change; `maxRedirects` default 5
 - Only http and https; a URL without host is refused; a literal IP is only checked
-- Exceptions: abstract `ClientException` (`ClientExceptionInterface`, `getRequest()`): `RequestRefused` (`$reason`: `Refusal`, permanent), `ResolutionFailed` (`NetworkExceptionInterface`, possibly temporary DNS), `TransferFailed` (`NetworkExceptionInterface`, cause in `getPrevious()`), `ResponseTooLarge` (`$limit`), `TooManyRedirects` (`$limit`)
-- An explicit `proxy:` makes the proxy the SSRF boundary; DNS resolution has no client-side timeout
+- Exceptions: abstract `ClientException` (`ClientExceptionInterface`, `getRequest()`): `RequestRefused` (`$reason`: `Refusal`, permanent), `ResolutionFailed` (`NetworkExceptionInterface`, possibly temporary DNS), `TransferFailed` (`NetworkExceptionInterface`, cause in `getPrevious()`), `ResponseTooLarge` (`$limit`), `TooManyRedirects` (`$limit`), `InvalidMetadataDocument` (non-2xx status, or not a JSON object/array)
+- An explicit `proxy:` makes the proxy the SSRF boundary; `SystemResolver` has no client-side DNS timeout — `UdpDnsResolver` bounds it
+- `MetadataFetcher` fetches JSON metadata (JWKS, `/.well-known/*`) over any `ClientInterface`: https-only (`withAllowHttp()` opts out), non-2xx rejected and never cached, JSON decoding, PSR-16 cache honoring `Cache-Control: max-age` / `no-store` (default TTL 300 s)
+- `UdpDnsResolver` asks an explicit DNS server (IP literal) over UDP with a bounded wait; A + AAAA, CNAME chains followed; every failure is an empty list → `ResolutionFailed`; transport is `StreamUdpTransport` by default, any `DnsTransport` can be injected
 
 ## API
 
 ```php
 use GuzzleHttp\Psr7\Request;
-use Rasuvaeff\PinnedHttpClient\{ClientException, PinnedClient, PublicAddresses, RedirectFollower, Refusal, RequestRefused, ResponseTooLarge, SystemResolver};
+use Rasuvaeff\PinnedHttpClient\{ClientException, MetadataFetcher, PinnedClient, PublicAddresses, RedirectFollower, Refusal, RequestRefused, ResponseTooLarge, SystemResolver, UdpDnsResolver};
 
 $client = new PinnedClient(
     policy: new PublicAddresses(),      // AddressPolicy::allows(string $address): bool
@@ -43,6 +45,17 @@ try {
 } catch (ClientException $failed) {
     // TransferFailed | ResolutionFailed | TooManyRedirects
 }
+
+// Metadata documents (JWKS, /.well-known/*, OIDC discovery)
+$fetcher = new MetadataFetcher(
+    new PinnedClient(maxBodyBytes: 65_536),
+    cache: $psr16,        // Psr\SimpleCache\CacheInterface, optional
+    defaultTtlSeconds: 300,
+);
+$keys = $fetcher->fetchJson('https://auth.example.com/.well-known/jwks.json'); // array<array-key, mixed>
+
+// A resolver with a bounded DNS timeout
+$pinned = new PinnedClient(resolver: new UdpDnsResolver(server: '10.0.0.53', timeoutSeconds: 2.0));
 
 (new PublicAddresses())->allows('169.254.169.254'); // false
 (new PublicAddresses())->allows('::ffff:10.0.0.1'); // false: judged as the embedded IPv4

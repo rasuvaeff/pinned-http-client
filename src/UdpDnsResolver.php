@@ -62,14 +62,14 @@ final readonly class UdpDnsResolver implements Resolver
             );
 
             if ($response === null) {
-                continue;
+                return [];
             }
 
             try {
                 $parsed = Internal\DnsMessage::parseAddresses($response, $id);
             } catch (Internal\InvalidDnsResponse) {
-                // битый ответ неотличим от неответа: стек не даёт адресов
-                continue;
+                // битый ответ неотличим от неответа; частичный набор адресов не отдаём
+                return [];
             }
 
             foreach ($parsed as $address) {

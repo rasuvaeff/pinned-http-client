@@ -98,7 +98,7 @@ final class UdpDnsResolverTest
         Assert::same($port->last(), 65535);
     }
 
-    public function anUnansweredAQueryStillCollectsTheAaaaAnswer(): void
+    public function anUnansweredAQueryFailsTheWholeResolution(): void
     {
         $transport = Understudy::for(DnsTransport::class);
         $aaaaResponse = $this->answer(self::AAAA, DnsMessage::TYPE_AAAA);
@@ -112,8 +112,54 @@ final class UdpDnsResolverTest
 
         $resolver = new UdpDnsResolver(server: '10.0.0.53', timeoutSeconds: 2.0, transport: $transport);
 
-        // тихий A не отменяет AAAA: опрос продолжается, а не обрывается
-        Assert::same($resolver->resolve('example.test'), [self::AAAA]);
+        // частичный результат не отдаётся, и второй запрос не тратит время зря
+        Assert::same($resolver->resolve('example.test'), []);
+        Understudy::verify(fn() => $transport->query(Arg::any(), Arg::any(), Arg::any(), Arg::satisfies(
+            static fn(string $message): bool => str_ends_with($message, "\x00\x1c\x00\x01"),
+        )), never: true);
+    }
+
+    public function anUnansweredAaaaQueryFailsTheWholeResolution(): void
+    {
+        $transport = Understudy::for(DnsTransport::class);
+        $aResponse = $this->answer(self::A, DnsMessage::TYPE_A);
+        when(fn() => $transport->query(Arg::any(), Arg::any(), Arg::any(), Arg::satisfies(
+            static fn(string $message): bool => str_ends_with($message, "\x00\x01\x00\x01"),
+        )))->answers(static fn(Invocation $invocation): string
+            => substr((string) $invocation->args[3], 0, 2) . substr($aResponse, 2));
+        when(fn() => $transport->query(Arg::any(), Arg::any(), Arg::any(), Arg::satisfies(
+            static fn(string $message): bool => str_ends_with($message, "\x00\x1c\x00\x01"),
+        ))); // AAAA-запрос не отвечает
+
+        $resolver = new UdpDnsResolver(server: '10.0.0.53', timeoutSeconds: 2.0, transport: $transport);
+
+        Assert::same($resolver->resolve('example.test'), []);
+    }
+
+    public function aDamagedReplyToEitherQueryFailsTheWholeResolution(): void
+    {
+        foreach (["\x00\x01\x00\x01", "\x00\x1c\x00\x01"] as $damagedSuffix) {
+            $transport = Understudy::for(DnsTransport::class);
+            $aResponse = $this->answer(self::A, DnsMessage::TYPE_A);
+            $aaaaResponse = $this->answer(self::AAAA, DnsMessage::TYPE_AAAA);
+            when(fn() => $transport->query(Arg::any(), Arg::any(), Arg::any(), Arg::any()))
+                ->answers(static function (Invocation $invocation) use ($damagedSuffix, $aResponse, $aaaaResponse): string {
+                    $message = (string) $invocation->args[3];
+
+                    if (str_ends_with($message, $damagedSuffix)) {
+                        return 'garbage';
+                    }
+
+                    return substr($message, 0, 2) . substr(
+                        str_ends_with($message, "\x00\x01\x00\x01") ? $aResponse : $aaaaResponse,
+                        2,
+                    );
+                });
+
+            $resolver = new UdpDnsResolver(server: '10.0.0.53', timeoutSeconds: 2.0, transport: $transport);
+
+            Assert::same($resolver->resolve('example.test'), []);
+        }
     }
 
     #[DataProvider('invalidSettingsProvider')]

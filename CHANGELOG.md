@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `MetadataFetcher` (#8): JSON metadata documents (JWKS, `/.well-known/*`, OIDC discovery) over any `ClientInterface` — https-only, JSON decoding, PSR-16 cache honoring `Cache-Control: max-age` / `no-store`. New `InvalidMetadataDocument` exception; `psr/simple-cache` joins `require`.
+- `MetadataFetcher` (#8): JSON metadata documents (JWKS, `/.well-known/*`, OIDC discovery) over any `ClientInterface` — https-only, non-2xx statuses rejected (never cached), JSON decoding, PSR-16 cache honoring `Cache-Control: max-age` / `no-store`. New `InvalidMetadataDocument` exception; `psr/simple-cache` joins `require`.
 - `UdpDnsResolver` (#8): a `Resolver` with a bounded DNS timeout — A and AAAA queries over UDP to an explicitly configured server; CNAME chains followed; any failure is an empty list (`ResolutionFailed` at the client). Transport is injectable via the new `DnsTransport` interface; the default is `StreamUdpTransport`.
 
 ### Changed

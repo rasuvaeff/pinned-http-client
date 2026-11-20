@@ -64,7 +64,7 @@ final readonly class MetadataFetcher
      * @throws ResolutionFailed имя не разрешилось (возможно, временно)
      * @throws ResponseTooLarge тело превысило потолок клиента
      * @throws TransferFailed соединение, TLS или таймаут
-     * @throws InvalidMetadataDocument ответ не разобрался в JSON-объект или массив
+     * @throws InvalidMetadataDocument статус не 2xx либо ответ не разобрался в JSON-объект или массив
      */
     public function fetchJson(string $url): array
     {
@@ -89,6 +89,12 @@ final readonly class MetadataFetcher
 
         $request = new Request('GET', $url);
         $response = $this->client->sendRequest($request);
+        $status = $response->getStatusCode();
+
+        if ($status < 200 || $status > 299) {
+            throw new InvalidMetadataDocument($request, 'The server answered with HTTP ' . $status);
+        }
+
         $body = (string) $response->getBody();
 
         try {

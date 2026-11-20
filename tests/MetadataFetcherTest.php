@@ -90,6 +90,53 @@ final class MetadataFetcherTest
         (new MetadataFetcher($this->clientReturning(body: '{"keys":')))->fetchJson(self::URL);
     }
 
+    #[DataProvider('nonSuccessStatusProvider')]
+    public function rejectsNonSuccessStatusesEvenWithAJsonBody(int $status): void
+    {
+        $client = Understudy::for(ClientInterface::class);
+        when(fn() => $client->sendRequest(Arg::any()))
+            ->returns(new Response(status: $status, body: '{"keys":[]}'));
+
+        try {
+            (new MetadataFetcher($client))->fetchJson(self::URL);
+            Assert::same('InvalidMetadataDocument was expected', 'but nothing was thrown');
+        } catch (InvalidMetadataDocument $invalid) {
+            Assert::same($invalid->getMessage(), 'The server answered with HTTP ' . $status);
+        }
+    }
+
+    public static function nonSuccessStatusProvider(): iterable
+    {
+        yield 'continue' => [199];
+        yield 'multiple choices' => [300];
+        yield 'not found' => [404];
+        yield 'server error' => [500];
+    }
+
+    public function aNonSuccessAnswerIsNeverCached(): void
+    {
+        $cache = Understudy::for(CacheInterface::class);
+        $client = Understudy::for(ClientInterface::class);
+        when(fn() => $client->sendRequest(Arg::any()))
+            ->returns(new Response(status: 503, headers: ['Cache-Control' => 'max-age=600'], body: '{"error":"down"}'));
+
+        try {
+            (new MetadataFetcher($client, cache: $cache))->fetchJson(self::URL);
+        } catch (InvalidMetadataDocument) {
+        }
+
+        Understudy::verify(fn() => $cache->set(Arg::any(), Arg::any(), Arg::any()), never: true);
+    }
+
+    public function anyTwoHundredRangeStatusIsAccepted(): void
+    {
+        $client = Understudy::for(ClientInterface::class);
+        when(fn() => $client->sendRequest(Arg::any()))
+            ->returns(new Response(status: 299, body: '{"a":1}'));
+
+        Assert::same((new MetadataFetcher($client))->fetchJson(self::URL), ['a' => 1]);
+    }
+
     #[ExpectException(TransferFailed::class)]
     public function bubblesTransportFailuresOfTheClient(): void
     {

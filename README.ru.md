@@ -88,7 +88,7 @@ $fetcher = new MetadataFetcher(
 $keys = $fetcher->fetchJson('https://auth.example.com/.well-known/jwks.json'); // array<array-key, mixed>
 ```
 
-Ходит только на `https://` (`withAllowHttp()` — исключение для чисто локальных сценариев); ответ обязан быть JSON (объект или массив — всё остальное `InvalidMetadataDocument`); кэш PSR-16 учитывает `Cache-Control: max-age` и `no-store` (TTL по умолчанию 300 с). Транспортные отказы (`RequestRefused`, `ResolutionFailed`, `ResponseTooLarge`, `TransferFailed`) всплывают от клиента без изменений.
+Ходит только на `https://` (`withAllowHttp()` — исключение для чисто локальных сценариев); ответ обязан быть 2xx с JSON-телом (объект или массив); любой другой статус или иное тело — `InvalidMetadataDocument`, в кэш такой ответ не попадает; кэш PSR-16 учитывает `Cache-Control: max-age` и `no-store` (TTL по умолчанию 300 с). Транспортные отказы (`RequestRefused`, `ResolutionFailed`, `ResponseTooLarge`, `TransferFailed`) всплывают от клиента без изменений.
 
 ### Резолвер с ограниченным таймаутом DNS
 
@@ -120,7 +120,7 @@ $client = new PinnedClient(resolver: new UdpDnsResolver(server: '10.0.0.53', tim
 | `TransferFailed` | Отправлен, но не удался (соединение, TLS, таймаут); `NetworkExceptionInterface`, причина в `getPrevious()` |
 | `ResponseTooLarge` | Тело превысило `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
 | `TooManyRedirects` | Переходов больше `maxRedirects`; `RequestExceptionInterface`, `$limit` |
-| `InvalidMetadataDocument` | Ответ дошёл, но не оказался JSON-объектом или массивом |
+| `InvalidMetadataDocument` | Ответ дошёл, но непригоден: статус не 2xx либо тело не JSON-объект и не массив |
 | `Refusal` | `UnsupportedScheme`, `MissingHost`, `AddressNotAllowed` |
 
 ### Политика по умолчанию

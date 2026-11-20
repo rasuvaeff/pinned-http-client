@@ -88,7 +88,7 @@ $fetcher = new MetadataFetcher(
 $keys = $fetcher->fetchJson('https://auth.example.com/.well-known/jwks.json'); // array<array-key, mixed>
 ```
 
-Only `https://` is fetched (`withAllowHttp()` opts out for purely local setups); the answer must be JSON (an object or an array — anything else is `InvalidMetadataDocument`); the PSR-16 cache honors `Cache-Control: max-age` and `no-store` (fall-back TTL 300 s). Transport failures (`RequestRefused`, `ResolutionFailed`, `ResponseTooLarge`, `TransferFailed`) bubble from the client untouched.
+Only `https://` is fetched (`withAllowHttp()` opts out for purely local setups); the answer must be a 2xx with a JSON body (an object or an array); any other status, or anything else in the body, is `InvalidMetadataDocument` and is never cached; the PSR-16 cache honors `Cache-Control: max-age` and `no-store` (fall-back TTL 300 s). Transport failures (`RequestRefused`, `ResolutionFailed`, `ResponseTooLarge`, `TransferFailed`) bubble from the client untouched.
 
 ### A resolver with a bounded DNS timeout
 
@@ -120,7 +120,7 @@ Every failure — timeout, damaged reply, a foreign id, an error RCODE — yield
 | `TransferFailed` | Sent but failed (connection, TLS, timeout); `NetworkExceptionInterface`, cause in `getPrevious()` |
 | `ResponseTooLarge` | The body passed `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
 | `TooManyRedirects` | More hops than `maxRedirects`; `RequestExceptionInterface`, `$limit` |
-| `InvalidMetadataDocument` | The answer came, but is not a JSON object or array |
+| `InvalidMetadataDocument` | The answer came, but is unusable: non-2xx status, or a body that is not a JSON object or array |
 | `Refusal` | `UnsupportedScheme`, `MissingHost`, `AddressNotAllowed` |
 
 ### The default policy

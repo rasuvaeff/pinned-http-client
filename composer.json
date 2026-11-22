@@ -24,7 +24,7 @@
         "source": "https://github.com/rasuvaeff/pinned-http-client"
     },
     "require": {
-        "php": "8.3 - 8.5",
+        "php": "8.3 - 8.6",
         "ext-curl": "*",
         "ext-filter": "*",
         "guzzlehttp/guzzle": "^7.9",

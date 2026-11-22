@@ -8,7 +8,7 @@ composer require rasuvaeff/pinned-http-client
 
 ## Rules
 
-- PHP 8.3+, `declare(strict_types=1)`, needs `ext-curl`, `ext-filter`; Guzzle is used internally and never exposed
+- PHP 8.3 – 8.6, `declare(strict_types=1)`, needs `ext-curl`, `ext-filter`; Guzzle is used internally and never exposed
 - Namespace `Rasuvaeff\PinnedHttpClient`
 - `PinnedClient` is a PSR-18 client: resolves the host once (IPv4 + IPv6), checks EVERY address with an `AddressPolicy`, pins the connection to those addresses (`CURLOPT_RESOLVE`); a non-public address among public ones refuses the host
 - The client builds its own transport: cURL handler only, no proxy from the environment, no redirects, body bounded (decompressed, default 10 MiB). It takes no Guzzle client, request options or cURL options

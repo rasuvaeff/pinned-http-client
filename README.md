@@ -18,7 +18,7 @@ A URL checked as `https://example.com/` is still dangerous when the connection i
 
 ## Requirements
 
-- PHP 8.3-8.5 with `curl` and `filter`
+- PHP 8.3-8.6 with `curl` and `filter`
 - `guzzlehttp/guzzle` ^7.9 and `guzzlehttp/psr7` ^2.7 (used internally, never exposed), `psr/http-client`, `psr/http-message`
 
 ## Installation

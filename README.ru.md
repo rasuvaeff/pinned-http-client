@@ -18,7 +18,7 @@ URL, проверенный как `https://example.com/`, остаётся оп
 
 ## Требования
 
-- PHP 8.3-8.5 с `curl` и `filter`
+- PHP 8.3-8.6 с `curl` и `filter`
 - `guzzlehttp/guzzle` ^7.9 и `guzzlehttp/psr7` ^2.7 (используются внутри, наружу не отдаются), `psr/http-client`, `psr/http-message`
 
 ## Установка

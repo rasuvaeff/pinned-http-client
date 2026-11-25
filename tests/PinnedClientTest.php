@@ -183,6 +183,9 @@ final class PinnedClientTest
         yield 'zero timeout' => [0.0, 1.0, null, null];
         yield 'negative timeout' => [-1.0, 1.0, null, null];
         yield 'nan timeout' => [\NAN, 1.0, null, null];
+        yield 'infinite timeout' => [\INF, 1.0, null, null];
+        yield 'infinite connect timeout' => [1.0, \INF, null, null];
+        yield 'nan connect timeout' => [1.0, \NAN, null, null];
         yield 'zero connect timeout' => [1.0, 0.0, null, null];
         yield 'zero body limit' => [1.0, 1.0, 0, null];
         yield 'empty proxy' => [1.0, 1.0, null, ''];

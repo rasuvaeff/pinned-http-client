@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.0 — 2026-11-25
+
+- **Fixed:** `RedirectFollower` no longer sends an already consumed body as an
+  empty one: a redirect that keeps the body (307/308, and 301/302 for methods
+  other than `POST`) throws the new `BodyNotReplayable` when the body is not
+  empty and not seekable. Seekable bodies are sent again in full, as before (#14).
+- **Fixed:** infinite timeouts are rejected by `PinnedClient` and `UdpDnsResolver`,
+  as `NAN` already was (#14).
+
 ## 1.1.1 — 2026-11-22
 
 - **Changed:** PHP 8.6 is supported: the `php` constraint is widened to

@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\PinnedHttpClient\Tests;
 
+use GuzzleHttp\Psr7\NoSeekStream;
 use GuzzleHttp\Psr7\Request;
+use GuzzleHttp\Psr7\Utils;
+use Rasuvaeff\PinnedHttpClient\BodyNotReplayable;
 use Rasuvaeff\PinnedHttpClient\PinnedClient;
 use Rasuvaeff\PinnedHttpClient\RedirectFollower;
 use Rasuvaeff\PinnedHttpClient\Refusal;
@@ -16,6 +19,7 @@ use Rasuvaeff\PinnedHttpClient\TooManyRedirects;
 use Testo\Assert;
 use Testo\Assert\ExpectException;
 use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
 use Testo\Test;
 
 /**
@@ -25,6 +29,7 @@ use Testo\Test;
 #[Test]
 #[Covers(RedirectFollower::class)]
 #[Covers(TooManyRedirects::class)]
+#[Covers(BodyNotReplayable::class)]
 final class RedirectFollowerTest
 {
     private function follower(int $max = 5): RedirectFollower
@@ -163,6 +168,47 @@ final class RedirectFollowerTest
             $answer = $this->json((string) $this->follower()->sendRequest(new Request('POST', $this->to($port, '/c', 307), [], 'kept'))->getBody());
 
             Assert::same([$answer['method'], $answer['path'], $answer['body']], ['POST', '/c', 'kept']);
+        });
+    }
+
+    #[DataProvider('bodyKeepingRedirectProvider')]
+    public function aBodyThatCannotBeRewoundIsRefusedInsteadOfSentEmpty(string $method, int $status): void
+    {
+        Server::run(function (int $port) use ($method, $status): void {
+            $request = new Request($method, $this->to($port, '/d', $status), [], new NoSeekStream(Utils::streamFor('payload')));
+
+            try {
+                $this->follower()->sendRequest($request);
+            } catch (BodyNotReplayable $refused) {
+                Assert::same($refused->getRequest()->getUri()->getPath(), '/to');
+                Assert::same($refused->getMessage(), 'A non-seekable request body cannot be sent again to the redirect target');
+
+                return;
+            }
+
+            throw new \LogicException('A consumed body was sent again');
+        });
+    }
+
+    public static function bodyKeepingRedirectProvider(): iterable
+    {
+        yield 'POST 307' => ['POST', 307];
+        yield 'POST 308' => ['POST', 308];
+        yield 'PUT 302' => ['PUT', 302];
+    }
+
+    public function anEmptyOrDiscardedBodyNeedsNoRewinding(): void
+    {
+        Server::run(function (int $port): void {
+            $empty = $this->json((string) $this->follower()->sendRequest(
+                new Request('POST', $this->to($port, '/e', 307), [], new NoSeekStream(Utils::streamFor(''))),
+            )->getBody());
+            $discarded = $this->json((string) $this->follower()->sendRequest(
+                new Request('POST', $this->to($port, '/f', 303), [], new NoSeekStream(Utils::streamFor('x'))),
+            )->getBody());
+
+            Assert::same([$empty['method'], $empty['path'], $empty['body']], ['POST', '/e', '']);
+            Assert::same([$discarded['method'], $discarded['path'], $discarded['body']], ['GET', '/f', '']);
         });
     }
 

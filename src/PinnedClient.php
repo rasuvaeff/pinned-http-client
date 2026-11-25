@@ -38,8 +38,8 @@ final readonly class PinnedClient implements ClientInterface
 
     /**
      * @param Resolver|null $resolver по умолчанию {@see SystemResolver} (IPv4 и IPv6)
-     * @param float $timeoutSeconds весь запрос, > 0
-     * @param float $connectTimeoutSeconds установка соединения, > 0
+     * @param float $timeoutSeconds весь запрос, > 0, конечное
+     * @param float $connectTimeoutSeconds установка соединения, > 0, конечное
      * @param int|null $maxBodyBytes потолок тела после распаковки, ≥ 1; `null` — без потолка
      * @param string|null $proxy явный непустой прокси (`http://egress:3128`); с ним соединение к цели устанавливает
      *     прокси, и SSRF-границей становится он. Прокси из окружения (`HTTPS_PROXY` и т. п.) не используется никогда
@@ -52,8 +52,8 @@ final readonly class PinnedClient implements ClientInterface
         ?int $maxBodyBytes = self::DEFAULT_MAX_BODY_BYTES,
         private ?string $proxy = null,
     ) {
-        if (\is_nan($timeoutSeconds) || \is_nan($connectTimeoutSeconds) || $timeoutSeconds <= 0.0 || $connectTimeoutSeconds <= 0.0) {
-            throw new \InvalidArgumentException('Timeouts must be positive');
+        if (!\is_finite($timeoutSeconds) || !\is_finite($connectTimeoutSeconds) || $timeoutSeconds <= 0.0 || $connectTimeoutSeconds <= 0.0) {
+            throw new \InvalidArgumentException('Timeouts must be positive and finite');
         }
 
         if ($maxBodyBytes !== null && $maxBodyBytes < 1) {

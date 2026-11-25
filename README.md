@@ -70,7 +70,7 @@ $quick = $client->withTimeouts(2.0, 1.0);
 
 **The body limit counts decompressed bytes**: a gzip bomb is cut at the limit, not after it unpacked. A body up to the limit is returned as the response body; one byte more ends the transfer with `ResponseTooLarge`.
 
-**Redirects** are never followed by `PinnedClient` itself: a redirect target is a new untrusted URL. `RedirectFollower` follows them by sending every hop through the pinned client again (resolve, check, pin), turns `303` (and `301`/`302` for `POST`) into a `GET` without a body, drops `Authorization`, `Cookie` and `Proxy-Authorization` when the origin changes, and stops after `maxRedirects` (default 5) with `TooManyRedirects`.
+**Redirects** are never followed by `PinnedClient` itself: a redirect target is a new untrusted URL. `RedirectFollower` follows them by sending every hop through the pinned client again (resolve, check, pin), turns `303` (and `301`/`302` for `POST`) into a `GET` without a body, drops `Authorization`, `Cookie` and `Proxy-Authorization` when the origin changes, and stops after `maxRedirects` (default 5) with `TooManyRedirects`. A hop that keeps a non-empty body which cannot be rewound is `BodyNotReplayable`: the body was already sent and would go out empty.
 
 ### Metadata documents
 
@@ -120,6 +120,7 @@ Every failure — timeout, damaged reply, a foreign id, an error RCODE — yield
 | `TransferFailed` | Sent but failed (connection, TLS, timeout); `NetworkExceptionInterface`, cause in `getPrevious()` |
 | `ResponseTooLarge` | The body passed `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
 | `TooManyRedirects` | More hops than `maxRedirects`; `RequestExceptionInterface`, `$limit` |
+| `BodyNotReplayable` | A redirect keeps a request body that is already sent and not seekable; `RequestExceptionInterface` |
 | `InvalidMetadataDocument` | The answer came, but is unusable: non-2xx status, or a body that is not a JSON object or array |
 | `Refusal` | `UnsupportedScheme`, `MissingHost`, `AddressNotAllowed` |
 

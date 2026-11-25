@@ -70,7 +70,7 @@ $quick = $client->withTimeouts(2.0, 1.0);
 
 **Ограничение тела считает распакованные байты**: gzip-бомба обрывается на лимите, а не после распаковки. Тело до лимита включительно приходит в ответе; байт сверх — и передача заканчивается `ResponseTooLarge`.
 
-**Переадресации** сам `PinnedClient` не выполняет никогда: цель переадресации — новый недоверенный URL. `RedirectFollower` проходит их, отправляя каждый переход через закрепляющий клиент заново (разрешение, проверка, закрепление), превращает `303` (и `301`/`302` для `POST`) в `GET` без тела, убирает `Authorization`, `Cookie` и `Proxy-Authorization` при смене источника и останавливается после `maxRedirects` (по умолчанию 5) с `TooManyRedirects`.
+**Переадресации** сам `PinnedClient` не выполняет никогда: цель переадресации — новый недоверенный URL. `RedirectFollower` проходит их, отправляя каждый переход через закрепляющий клиент заново (разрешение, проверка, закрепление), превращает `303` (и `301`/`302` для `POST`) в `GET` без тела, убирает `Authorization`, `Cookie` и `Proxy-Authorization` при смене источника и останавливается после `maxRedirects` (по умолчанию 5) с `TooManyRedirects`. Переход, сохраняющий непустое тело, которое нельзя перемотать, — `BodyNotReplayable`: тело уже отправлено и ушло бы пустым.
 
 ### Метаданные документов
 
@@ -120,6 +120,7 @@ $client = new PinnedClient(resolver: new UdpDnsResolver(server: '10.0.0.53', tim
 | `TransferFailed` | Отправлен, но не удался (соединение, TLS, таймаут); `NetworkExceptionInterface`, причина в `getPrevious()` |
 | `ResponseTooLarge` | Тело превысило `maxBodyBytes`; `RequestExceptionInterface`, `$limit` |
 | `TooManyRedirects` | Переходов больше `maxRedirects`; `RequestExceptionInterface`, `$limit` |
+| `BodyNotReplayable` | Переадресация сохраняет тело, которое уже отправлено и не перематывается; `RequestExceptionInterface` |
 | `InvalidMetadataDocument` | Ответ дошёл, но непригоден: статус не 2xx либо тело не JSON-объект и не массив |
 | `Refusal` | `UnsupportedScheme`, `MissingHost`, `AddressNotAllowed` |
 

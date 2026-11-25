@@ -15,7 +15,8 @@ use Psr\Http\Message\UriInterface;
 /**
  * Переадресации поверх {@see PinnedClient}: каждый переход — новый недоверенный URL, поэтому он заново разрешается,
  * проверяется политикой и закрепляется. 303 (и 301/302 для POST) превращаются в GET без тела; при смене источника
- * (схема, узел, порт) уходят `Authorization`, `Cookie` и `Proxy-Authorization`. Ответ без `Location` или с
+ * (схема, узел, порт) уходят `Authorization`, `Cookie` и `Proxy-Authorization`. Переход, сохраняющий тело, которое
+ * нельзя перемотать, — {@see BodyNotReplayable}. Ответ без `Location` или с
  * нечитаемым `Location` возвращается как есть.
  *
  * @api
@@ -37,7 +38,7 @@ final readonly class RedirectFollower implements ClientInterface
     }
 
     /**
-     * @throws ClientException любой отказ клиента на любом переходе, или {@see TooManyRedirects}
+     * @throws ClientException любой отказ клиента на любом переходе, {@see TooManyRedirects} или {@see BodyNotReplayable}
      */
     #[\Override]
     public function sendRequest(RequestInterface $request): ResponseInterface
@@ -85,6 +86,9 @@ final readonly class RedirectFollower implements ClientInterface
                 ->withBody(Utils::streamFor(''))
                 ->withoutHeader('Content-Type')
                 ->withoutHeader('Content-Length');
+        } elseif (!$request->getBody()->isSeekable() && $request->getBody()->getSize() !== 0) {
+            // тело прочитано предыдущим переходом до конца; перемотанное уйдёт заново, это — ушло бы пустым
+            throw new BodyNotReplayable($request);
         }
 
         if ($this->origin($request->getUri()) !== $this->origin($target)) {

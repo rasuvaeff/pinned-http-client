@@ -23,7 +23,7 @@ final readonly class UdpDnsResolver implements Resolver
     /**
      * @param string $server IP-литерал DNS-сервера, IPv4 или IPv6
      * @param int $port порт DNS-сервера, от 1 до 65535
-     * @param float $timeoutSeconds ожидание ответа на один запрос, > 0
+     * @param float $timeoutSeconds ожидание ответа на один запрос, > 0, конечное
      * @param DnsTransport|null $transport по умолчанию {@see StreamUdpTransport}
      */
     public function __construct(
@@ -40,8 +40,8 @@ final readonly class UdpDnsResolver implements Resolver
             throw new \InvalidArgumentException('The DNS port must be between 1 and 65535');
         }
 
-        if (\is_nan($timeoutSeconds) || $timeoutSeconds <= 0.0) {
-            throw new \InvalidArgumentException('The DNS timeout must be positive');
+        if (!\is_finite($timeoutSeconds) || $timeoutSeconds <= 0.0) {
+            throw new \InvalidArgumentException('The DNS timeout must be positive and finite');
         }
 
         $this->transport = $transport ?? new StreamUdpTransport();

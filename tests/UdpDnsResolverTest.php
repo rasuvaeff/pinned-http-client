@@ -178,6 +178,7 @@ final class UdpDnsResolverTest
         yield 'zero timeout' => ['127.0.0.1', 53, 0.0];
         yield 'negative timeout' => ['127.0.0.1', 53, -1.0];
         yield 'nan timeout' => ['127.0.0.1', 53, \NAN];
+        yield 'infinite timeout' => ['127.0.0.1', 53, \INF];
     }
 
     /**
